@@ -1,7 +1,7 @@
 # j - Fast Directory Jump
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](https://github.com/your-username/j-cmd)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/your-username/j-cmd)
 
 A fast directory jump command for Windows, Linux, and macOS.
 
@@ -12,9 +12,12 @@ A fast directory jump command for Windows, Linux, and macOS.
 ## Features
 
 - 🚀 Jump to directories by keyword
+- 🔍 **Interactive selection with fzf**
 - 📝 Automatic history recording (up to 1000 entries)
 - ↩️ Undo/Redo support
 - 🏷️ Alias support
+- 🚫 **Exclude patterns**
+- ⌨️ **Tab completion**
 - 💾 Cross-drive search (Windows)
 - 🌍 Cross-platform support
 
@@ -69,9 +72,79 @@ sudo cp target/release/j /usr/local/bin/
 
 ## Shell Configuration
 
-The `j` command outputs the target path. A shell function is required to actually change directories.
+### zsh (Recommended)
 
-### bash (Linux / macOS)
+Add to `~/.zshrc`:
+
+```zsh
+# j binary path
+J_CMD="/usr/local/bin/j"
+
+# Auto-record history on directory change
+chpwd() {
+    $J_CMD -c 2>/dev/null
+}
+
+# Extend cd with j
+cd() {
+    local result
+
+    if [[ $# -eq 0 ]]; then
+        builtin cd
+        return
+    fi
+
+    local arg="$1"
+
+    case "$arg" in
+        -)
+            result=$($J_CMD - 2>&1)
+            [[ -d "$result" ]] && builtin cd "$result"
+            return
+            ;;
+        +)
+            result=$($J_CMD + 2>&1)
+            [[ -d "$result" ]] && builtin cd "$result" || echo "$result"
+            return
+            ;;
+        .)
+            result=$($J_CMD . 2>&1)
+            [[ -d "$result" ]] && builtin cd "$result" || echo "$result"
+            return
+            ;;
+        -c|-x|-xa|-l|--list|-a|-ar|-al|-h|--help|-V|--version)
+            $J_CMD "$@"
+            return
+            ;;
+        -[0-9]|-[0-9][0-9]|-[0-9][0-9][0-9])
+            result=$($J_CMD "$arg" 2>&1)
+            [[ -d "$result" ]] && builtin cd "$result" || echo "$result"
+            return
+            ;;
+        \!*)
+            result=$($J_CMD "$arg" 2>&1)
+            [[ -d "$result" ]] && builtin cd "$result" || echo "$result"
+            return
+            ;;
+    esac
+
+    if builtin cd "$@" 2>/dev/null; then
+        return
+    fi
+
+    result=$($J_CMD "$@" 2>&1)
+    [[ -d "$result" ]] && builtin cd "$result" || builtin cd "$@"
+}
+
+j() { cd "$@"; }
+```
+
+Apply changes:
+```zsh
+source ~/.zshrc
+```
+
+### bash
 
 Add to `~/.bashrc`:
 
@@ -92,35 +165,11 @@ Apply changes:
 source ~/.bashrc
 ```
 
-### zsh (Linux / macOS)
-
-Add to `~/.zshrc`:
-
-```zsh
-j() {
-    local result
-    result=$(/usr/local/bin/j "$@" 2>&1)
-    if [ -d "$result" ]; then
-        builtin cd "$result"
-    elif [ -n "$result" ]; then
-        echo "$result"
-    fi
-}
-```
-
-Apply changes:
-```zsh
-source ~/.zshrc
-```
-
 ### PowerShell (Windows)
 
 Add to your `$PROFILE`:
 
 ```powershell
-# Check $PROFILE location: echo $PROFILE
-# Edit: notepad $PROFILE
-
 function j {
     $prevOutputEncoding = [Console]::OutputEncoding
     $prevInputEncoding = [Console]::InputEncoding
@@ -163,130 +212,118 @@ Register auto-run in registry:
 reg add "HKCU\Software\Microsoft\Command Processor" /v AutoRun /t REG_SZ /d "C:\path\to\j-init.cmd" /f
 ```
 
-## cd Command Alias (Optional)
-
-If you prefer to extend the `cd` command instead of using `j`:
-
-### bash / zsh
-
-Add to `~/.bashrc` or `~/.zshrc`:
-
-```bash
-cd() {
-    if [ $# -eq 0 ]; then
-        builtin cd
-    elif [ -d "$1" ]; then
-        builtin cd "$@"
-    else
-        local result
-        result=$(/usr/local/bin/j "$@" 2>&1)
-        if [ -d "$result" ]; then
-            builtin cd "$result"
-        else
-            builtin cd "$@"
-        fi
-    fi
-}
-```
-
-### PowerShell
-
-Add to `$PROFILE`:
-
-```powershell
-function cd {
-    param([string]$path)
-    
-    if (-not $path) {
-        Set-Location ~
-        return
-    }
-    
-    if (Test-Path -LiteralPath $path -PathType Container -ErrorAction SilentlyContinue) {
-        Set-Location -LiteralPath $path
-        return
-    }
-    
-    $result = & j.exe $path 2>&1
-    if ($result -is [array]) {
-        foreach ($line in $result) { Write-Host $line }
-        return
-    }
-    
-    $output = "$result".Trim()
-    if ($output -and (Test-Path -LiteralPath $output -PathType Container -ErrorAction SilentlyContinue)) {
-        Set-Location -LiteralPath $output
-    } else {
-        Set-Location -LiteralPath $path
-    }
-}
-```
-
 ## Usage
 
 ### Basic Navigation
 
 ```bash
-j                   # Jump to home directory
-j src               # Jump to directory containing "src"
-j proj/src          # Jump to path containing "proj" and "src"
-j ~/work            # Jump to ~/work (tilde expansion)
-j /usr/local        # Absolute path
-j ../sibling        # Relative path
+cd                  # Jump to home directory
+cd /var/log         # Regular cd
+cd proj             # Jump to directory containing "proj" (keyword search)
+cd proj/src         # Jump to path containing "proj" and "src"
+```
+
+### Multiple Keyword Search
+
+You can specify multiple keywords separated by spaces. Keywords are matched **in order**.
+
+```bash
+cd first one        # Jump to path where "first" comes before "one"
+                    # Example: /home/first/project/one → ✅ Match
+                    #          /home/one/project/first → ❌ Wrong order
+                    #          /home/second/project/one → ❌ No "first"
+
+cd work api src     # Jump to path containing work → api → src in order
+                    # Example: /home/work/myapp/api/src → ✅ Match
 ```
 
 ### Drive Navigation (Windows only)
 
 ```cmd
-j d:                # Jump to D: drive root
-j d:proj            # Search "proj" in D: drive
+cd d:               # Jump to D: drive root
+cd d:proj           # Search "proj" in D: drive
 ```
 
 ### History Operations
 
 | Command | Description |
 |---------|-------------|
-| `j -` | Go back (Undo) |
-| `j +` | Go forward (Redo) |
-| `j .` | Jump to last visited directory |
-| `j -c` | Record current directory to history |
-| `j -x` | Remove current directory from history |
-| `j -xa` | Clear all history |
-| `j -l` | List history (default 20 entries) |
-| `j -l 10` | List 10 history entries |
-| `j -1` | Jump to 1st (most recent) history entry |
-| `j -5` | Jump to 5th history entry |
+| `cd -` | Go back (Undo) |
+| `cd +` | Go forward (Redo) |
+| `cd .` | Jump to last visited directory |
+| `cd -c` | Record current directory to history |
+| `cd -x` | Remove current directory from history |
+| `cd -xa` | Clear all history |
+| `cd -l` | List history (default 20 entries) |
+| `cd -l 10` | List 10 history entries |
+| `cd -1` | Jump to 1st (most recent) history entry |
+| `cd -5` | Jump to 5th history entry |
 
 ### Aliases
 
 | Command | Description |
 |---------|-------------|
-| `j -a doc` | Create alias "doc" for current directory |
-| `j !doc` | Jump to alias "doc" |
-| `j -ar doc` | Remove alias "doc" |
-| `j -al` | List all aliases |
+| `cd -a doc` | Create alias "doc" for current directory |
+| `cd !doc` | Jump to alias "doc" |
+| `cd -ar doc` | Remove alias "doc" |
+| `cd -al` | List all aliases |
+
+### Interactive Mode (fzf integration)
+
+Install fzf to enable interactive selection from history.
+
+```bash
+cd -i               # Select from all history with fzf
+cd -i proj          # Filter by "proj" and select with fzf
+ji                  # Shortcut for cd -i (zsh)
+ji proj             # Shortcut for cd -i proj
+```
+
+Install fzf:
+```bash
+# Ubuntu/Debian
+sudo apt install fzf
+
+# macOS
+brew install fzf
+
+# Windows (scoop)
+scoop install fzf
+```
+
+### Exclude Patterns
+
+Exclude specific directories from history search.
+
+```bash
+j --exclude-add node_modules     # Exclude node_modules
+j --exclude-add .git             # Exclude .git
+j --exclude-add "*.tmp"          # Exclude *.tmp (wildcard)
+j --exclude-list                 # List exclude patterns
+j --exclude-remove node_modules  # Remove pattern
+```
 
 ### Examples
 
 ```bash
 # Jump to project directory
-j myproject
+cd myproject
 
 # Create alias
 cd ~/Documents
-j -a doc
+cd -a doc
 
 # Use alias
-j !doc
+cd !doc
 
 # Undo/Redo
-j src           # Jump to /work/project/src
-j -             # Go back to previous directory
-j +             # Go forward to /work/project/src again
+cd src           # Jump to /work/project/src
+cd -             # Go back to previous directory
+cd +             # Go forward to /work/project/src again
 
 # Select from history
-j -l            # List history
-j -3            # Jump to 3rd history entry
+cd -l            # List history
+cd -3            # Jump to 3rd history entry
 ```
 
 ## Matching Rules
@@ -297,8 +334,11 @@ j -3            # Jump to 3rd history entry
 
 - Case insensitive
 - Last keyword must match the final directory name
+- **Multiple keywords are matched in the specified order**
 
-Example: `j rust` matches `/work/rust` but not `/work/rust/src`
+Examples:
+- `cd rust` matches `/work/rust` but not `/work/rust/src`
+- `cd work rust` matches `/home/work/project/rust` but not `/home/rust/project/work`
 
 ## Configuration Files
 
@@ -307,7 +347,8 @@ Configuration is stored in `~/.config/j/`:
 ```
 ~/.config/j/
 ├── state.json      # History and undo/redo stack
-└── aliases.json    # Aliases
+├── aliases.json    # Aliases
+└── config.json     # Exclude patterns and settings
 ```
 
 ## Uninstall
@@ -321,7 +362,7 @@ sudo rm /usr/local/bin/j
 # Remove configuration
 rm -rf ~/.config/j
 
-# Remove j function from ~/.bashrc or ~/.zshrc
+# Remove settings from ~/.zshrc or ~/.bashrc
 ```
 
 ### Windows

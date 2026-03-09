@@ -1,0 +1,45 @@
+#compdef j
+
+# j-cmd zsh completion
+# Install: Place this file in a directory in your $fpath
+# e.g., /usr/local/share/zsh/site-functions/_j
+# or ~/.zsh/completions/_j (add to fpath in .zshrc)
+
+_j() {
+    local -a completions
+    local -a options
+
+    options=(
+        '-i:Interactive selection with fzf'
+        '-c:Record current directory to history'
+        '-x:Remove current directory from history'
+        '-xa:Clear all history'
+        '-l:List history'
+        '-a:Create alias for current directory'
+        '-ar:Remove alias'
+        '-al:List aliases'
+        '-h:Show help'
+        '--help:Show help'
+        '-V:Show version'
+        '--version:Show version'
+        '--exclude-add:Add exclude pattern'
+        '--exclude-remove:Remove exclude pattern'
+        '--exclude-list:List exclude patterns'
+        '--complete:Output matching paths'
+    )
+
+    if [[ "${words[2]}" == -* ]]; then
+        _describe 'options' options
+        return
+    fi
+
+    # Get completions from j --complete
+    local keyword="${words[2,-1]}"
+    completions=(${(f)"$(j --complete $keyword 2>/dev/null)"})
+    
+    if [[ -n "$completions" ]]; then
+        _values 'directories' $completions
+    fi
+}
+
+_j "$@"
