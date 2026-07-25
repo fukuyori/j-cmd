@@ -1,8 +1,17 @@
-use chrono::{DateTime, Utc};
+mod shell_init;
+
+use chrono::{DateTime, Duration, Utc};
+use crossterm::{
+    cursor,
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute, queue,
+    style::{Attribute, Print, SetAttribute},
+    terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::env;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -30,6 +39,8 @@ const PATH_SEP: char = '/';
 
 const MAX_HISTORY: usize = 1000;
 const MAX_UNDO_STACK: usize = 50;
+const HISTORY_LIST_LIMIT: usize = 20;
+const MISSING_HISTORY_RETENTION_DAYS: i64 = 90;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HistoryEntry {
@@ -63,10 +74,42 @@ struct Aliases {
     map: std::collections::HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Ranking {
+    #[default]
+    Recent,
+    Frecency,
+    Frequency,
+}
+
+impl Ranking {
+    fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "recent" => Some(Self::Recent),
+            "frecency" => Some(Self::Frecency),
+            "frequency" => Some(Self::Frequency),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Recent => "recent",
+            Self::Frecency => "frecency",
+            Self::Frequency => "frequency",
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Config {
     #[serde(default)]
     excludes: Vec<String>,
+    #[serde(default)]
+    ranking: Ranking,
+    #[serde(default)]
+    fzf_opts: Option<String>,
 }
 
 fn get_config_dir() -> PathBuf {
@@ -96,6 +139,13 @@ fn load_state() -> AppState {
         fs::read_to_string(&path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
+            .map(|mut state: AppState| {
+                sort_history_by_recency(&mut state.history);
+                if prune_stale_missing_history(&mut state, Utc::now()) > 0 {
+                    save_state(&state).ok();
+                }
+                state
+            })
             .unwrap_or_default()
     } else {
         AppState::default()
@@ -182,12 +232,80 @@ fn is_excluded(path: &str, config: &Config) -> bool {
     false
 }
 
+fn split_option_string(value: &str) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut chars = value.chars().peekable();
+    let mut quote = None;
+
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (Some(active), ch) if ch == active => quote = None,
+            (Some('"'), '\\') => {
+                if matches!(chars.peek(), Some('"' | '\\')) {
+                    current.push(chars.next().unwrap());
+                } else {
+                    current.push('\\');
+                }
+            }
+            (Some(_), ch) => current.push(ch),
+            (None, '"' | '\'') => quote = Some(ch),
+            (None, '\\') => {
+                if matches!(chars.peek(), Some(next) if next.is_whitespace() || matches!(next, '"' | '\'' | '\\'))
+                {
+                    current.push(chars.next().unwrap());
+                } else {
+                    current.push('\\');
+                }
+            }
+            (None, ch) if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            (None, ch) => current.push(ch),
+        }
+    }
+
+    if quote.is_some() {
+        return Err("unterminated quote".to_string());
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    Ok(args)
+}
+
+fn configured_fzf_args(config: &Config) -> Vec<String> {
+    let value = env::var("J_FZF_OPTS")
+        .ok()
+        .or_else(|| config.fzf_opts.clone());
+    match value {
+        Some(value) => match split_option_string(&value) {
+            Ok(args) => args,
+            Err(error) => {
+                eprintln!("Ignoring invalid fzf options: {}", error);
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    }
+}
+
 /// Run fzf with candidates and return selected path
-fn run_fzf(candidates: &[String], query: &str) -> Option<String> {
+fn run_fzf(candidates: &[String], query: &str, config: &Config) -> Option<String> {
     let fzf_cmd = if cfg!(windows) { "fzf.exe" } else { "fzf" };
+    let mut args = vec![
+        "--height".to_string(),
+        "40%".to_string(),
+        "--reverse".to_string(),
+    ];
+    args.extend(configured_fzf_args(config));
+    args.push("--query".to_string());
+    args.push(query.to_string());
     
     let mut child = match Command::new(fzf_cmd)
-        .args(["--height", "40%", "--reverse", "--query", query])
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -216,6 +334,233 @@ fn run_fzf(candidates: &[String], query: &str) -> Option<String> {
     None
 }
 
+#[cfg(windows)]
+fn open_terminal_output() -> io::Result<File> {
+    OpenOptions::new().write(true).open("CONOUT$")
+}
+
+#[cfg(not(windows))]
+fn open_terminal_output() -> io::Result<File> {
+    OpenOptions::new().read(true).write(true).open("/dev/tty")
+}
+
+struct HistorySelectorTerminal {
+    output: File,
+}
+
+impl HistorySelectorTerminal {
+    fn enter() -> io::Result<Self> {
+        let mut output = open_terminal_output()?;
+        terminal::enable_raw_mode()?;
+        if let Err(error) = execute!(output, EnterAlternateScreen, cursor::Hide) {
+            terminal::disable_raw_mode().ok();
+            return Err(error);
+        }
+        Ok(Self { output })
+    }
+
+    fn output(&mut self) -> &mut File {
+        &mut self.output
+    }
+}
+
+impl Drop for HistorySelectorTerminal {
+    fn drop(&mut self) {
+        execute!(self.output, cursor::Show, LeaveAlternateScreen).ok();
+        terminal::disable_raw_mode().ok();
+    }
+}
+
+fn history_list_candidates(state: &AppState, keyword: &str) -> Vec<String> {
+    let keyword = keyword.to_lowercase();
+    state
+        .history
+        .iter()
+        .rev()
+        .filter(|entry| keyword.is_empty() || entry.path.to_lowercase().contains(&keyword))
+        .take(HISTORY_LIST_LIMIT)
+        .map(|entry| entry.path.clone())
+        .collect()
+}
+
+fn remove_history_path(state: &mut AppState, path: &str) -> bool {
+    let before_len = state.history.len();
+    state
+        .history
+        .retain(|entry| !entry.path.eq_ignore_ascii_case(path));
+    state.history.len() < before_len
+}
+
+fn truncate_terminal_line(text: &str, width: usize) -> String {
+    let char_count = text.chars().count();
+    if char_count <= width {
+        return text.to_string();
+    }
+    if width <= 1 {
+        return "…".chars().take(width).collect();
+    }
+    let mut result: String = text.chars().take(width - 1).collect();
+    result.push('…');
+    result
+}
+
+fn render_history_selector(
+    output: &mut impl Write,
+    candidates: &[String],
+    selected: usize,
+    keyword: &str,
+    status: &str,
+) -> io::Result<()> {
+    let (width, height) = terminal::size().unwrap_or((80, 24));
+    let list_height = usize::from(height.saturating_sub(4).max(1));
+    let offset = selected.saturating_add(1).saturating_sub(list_height);
+
+    queue!(
+        output,
+        cursor::MoveTo(0, 0),
+        Clear(ClearType::All),
+        SetAttribute(Attribute::Bold),
+        Print(format!("History ({})", candidates.len())),
+        SetAttribute(Attribute::Reset)
+    )?;
+    if !keyword.is_empty() {
+        queue!(output, Print(format!("  filter: {}", keyword)))?;
+    }
+    queue!(
+        output,
+        Print("\r\n↑/↓: select  Enter: move  x: delete  Esc/q: cancel\r\n"),
+        Print(truncate_terminal_line(status, usize::from(width))),
+        Print("\r\n")
+    )?;
+
+    if candidates.is_empty() {
+        queue!(output, Print("No matching history entries."))?;
+    } else {
+        for (index, path) in candidates
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(list_height)
+        {
+            let missing = if Path::new(path).is_dir() {
+                ""
+            } else {
+                "  [missing]"
+            };
+            let line = truncate_terminal_line(
+                &format!("{}{}{}", if index == selected { "> " } else { "  " }, path, missing),
+                usize::from(width),
+            );
+            if index == selected {
+                queue!(
+                    output,
+                    SetAttribute(Attribute::Reverse),
+                    Print(line),
+                    SetAttribute(Attribute::Reset)
+                )?;
+            } else {
+                queue!(output, Print(line))?;
+            }
+            queue!(output, Print("\r\n"))?;
+        }
+    }
+
+    output.flush()
+}
+
+fn select_history(state: &mut AppState, keyword: &str) -> io::Result<Option<String>> {
+    let mut candidates = history_list_candidates(state, keyword);
+    let mut selected = 0;
+    let mut status = String::new();
+    let mut terminal = HistorySelectorTerminal::enter()?;
+
+    loop {
+        render_history_selector(terminal.output(), &candidates, selected, keyword, &status)?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            status.clear();
+
+            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                return Ok(None);
+            }
+
+            match key.code {
+                KeyCode::Up if !candidates.is_empty() => {
+                    selected = if selected == 0 {
+                        candidates.len() - 1
+                    } else {
+                        selected - 1
+                    };
+                }
+                KeyCode::Down if !candidates.is_empty() => {
+                    selected = (selected + 1) % candidates.len();
+                }
+                KeyCode::Enter if !candidates.is_empty() => {
+                    let path = &candidates[selected];
+                    if Path::new(path).is_dir() {
+                        return Ok(Some(path.clone()));
+                    }
+                    status = "Directory not found. Press x to delete this entry.".to_string();
+                }
+                KeyCode::Char('x' | 'X') if !candidates.is_empty() => {
+                    let path = candidates[selected].clone();
+                    if remove_history_path(state, &path) {
+                        save_state(state)?;
+                    }
+                    candidates = history_list_candidates(state, keyword);
+                    if !candidates.is_empty() {
+                        selected = selected.min(candidates.len() - 1);
+                    } else {
+                        selected = 0;
+                    }
+                    status = format!("Deleted: {}", path);
+                }
+                KeyCode::Esc | KeyCode::Char('q' | 'Q') => return Ok(None),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn frecency_score(entry: &HistoryEntry, now: DateTime<Utc>) -> u64 {
+    let age_seconds = now
+        .signed_duration_since(entry.last_visited)
+        .num_seconds()
+        .max(0);
+    let count = u64::from(entry.visit_count);
+    if age_seconds < 60 * 60 {
+        count * 16
+    } else if age_seconds < 24 * 60 * 60 {
+        count * 8
+    } else if age_seconds < 7 * 24 * 60 * 60 {
+        count * 2
+    } else {
+        count
+    }
+}
+
+fn ranked_history_entries<'a>(
+    state: &'a AppState,
+    config: &Config,
+    now: DateTime<Utc>,
+) -> Vec<&'a HistoryEntry> {
+    let mut entries: Vec<&HistoryEntry> = state.history.iter().collect();
+    entries.sort_by(|a, b| {
+        let primary = match config.ranking {
+            Ranking::Recent => b.last_visited.cmp(&a.last_visited),
+            Ranking::Frecency => frecency_score(b, now).cmp(&frecency_score(a, now)),
+            Ranking::Frequency => b.visit_count.cmp(&a.visit_count),
+        };
+        primary
+            .then_with(|| b.last_visited.cmp(&a.last_visited))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    entries
+}
+
 /// Search history and return all matching candidates
 fn search_history_all(state: &AppState, keyword: &str, config: &Config) -> Vec<String> {
     let tokens: Vec<String> = split_path(keyword)
@@ -224,10 +569,11 @@ fn search_history_all(state: &AppState, keyword: &str, config: &Config) -> Vec<S
         .collect();
     
     let mut results = Vec::new();
+    let ranked = ranked_history_entries(state, config, Utc::now());
     
     if tokens.is_empty() {
         // Return all valid directories
-        for entry in state.history.iter().rev() {
+        for entry in ranked.iter().copied() {
             if !is_excluded(&entry.path, config) && Path::new(&entry.path).is_dir() {
                 results.push(entry.path.clone());
             }
@@ -238,7 +584,7 @@ fn search_history_all(state: &AppState, keyword: &str, config: &Config) -> Vec<S
     let last_token = tokens.last().unwrap();
     
     // Exact match on last directory name
-    for entry in state.history.iter().rev() {
+    for entry in ranked.iter().copied() {
         if is_excluded(&entry.path, config) {
             continue;
         }
@@ -262,7 +608,7 @@ fn search_history_all(state: &AppState, keyword: &str, config: &Config) -> Vec<S
     }
     
     // Partial match on last directory name
-    for entry in state.history.iter().rev() {
+    for entry in ranked.iter().copied() {
         if is_excluded(&entry.path, config) {
             continue;
         }
@@ -421,9 +767,10 @@ fn search_history(state: &AppState, keyword: &str, config: &Config) -> Option<St
     }
     
     let last_token = tokens.last().unwrap();
+    let ranked = ranked_history_entries(state, config, Utc::now());
     
     // First pass: exact match on last directory name, with order-aware matching
-    for entry in state.history.iter().rev() {
+    for entry in ranked.iter().copied() {
         if is_excluded(&entry.path, config) {
             continue;
         }
@@ -449,7 +796,7 @@ fn search_history(state: &AppState, keyword: &str, config: &Config) -> Option<St
     }
     
     // Second pass: partial match on last directory name, with order-aware matching
-    for entry in state.history.iter().rev() {
+    for entry in ranked.iter().copied() {
         if is_excluded(&entry.path, config) {
             continue;
         }
@@ -477,12 +824,31 @@ fn search_history(state: &AppState, keyword: &str, config: &Config) -> Option<St
     None
 }
 
+fn prune_stale_missing_history(state: &mut AppState, now: DateTime<Utc>) -> usize {
+    let before_len = state.history.len();
+    let retention = Duration::days(MISSING_HISTORY_RETENTION_DAYS);
+    state.history.retain(|entry| {
+        Path::new(&entry.path).exists() || now.signed_duration_since(entry.last_visited) < retention
+    });
+    before_len - state.history.len()
+}
+
+fn sort_history_by_recency(history: &mut [HistoryEntry]) {
+    history.sort_by_key(|entry| entry.last_visited);
+}
+
 fn add_to_history(state: &mut AppState, path: &str) {
     let path = path.to_string();
     
-    if let Some(entry) = state.history.iter_mut().find(|e| e.path.eq_ignore_ascii_case(&path)) {
+    if let Some(index) = state
+        .history
+        .iter()
+        .position(|e| e.path.eq_ignore_ascii_case(&path))
+    {
+        let mut entry = state.history.remove(index);
         entry.last_visited = Utc::now();
         entry.visit_count += 1;
+        state.history.push(entry);
     } else {
         state.history.push(HistoryEntry {
             path: path.clone(),
@@ -498,6 +864,7 @@ fn add_to_history(state: &mut AppState, path: &str) {
             score_b.cmp(&score_a)
         });
         state.history.truncate(MAX_HISTORY);
+        sort_history_by_recency(&mut state.history);
     }
 }
 
@@ -550,6 +917,13 @@ fn main() {
     let arg = &args[1];
     
     match arg.as_str() {
+        "init" => {
+            match shell_init::generate(&args[2..]) {
+                Ok(script) => print!("{}", script),
+                Err(error) => eprintln!("{}", error),
+            }
+            return;
+        }
         // Interactive mode with fzf
         "-i" | "--interactive" => {
             let keyword = if args.len() > 2 {
@@ -562,7 +936,7 @@ fn main() {
                 eprintln!("No matches found");
                 return;
             }
-            if let Some(selected) = run_fzf(&candidates, &keyword) {
+            if let Some(selected) = run_fzf(&candidates, &keyword, &config) {
                 if Path::new(&selected).is_dir() {
                     if let Some(ref cur) = current_dir {
                         push_undo(&mut state, cur);
@@ -584,6 +958,52 @@ fn main() {
             let candidates = search_history_all(&state, &keyword, &config);
             for path in candidates {
                 println!("{}", path);
+            }
+            return;
+        }
+        "--ranking" => {
+            if let Some(value) = args.get(2) {
+                if let Some(ranking) = Ranking::parse(value) {
+                    let mut config = load_config();
+                    config.ranking = ranking;
+                    if save_config(&config).is_ok() {
+                        eprintln!("Ranking: {}", ranking.as_str());
+                    }
+                } else {
+                    eprintln!("Ranking must be recent, frecency, or frequency");
+                }
+            } else {
+                eprintln!("Ranking: {}", config.ranking.as_str());
+            }
+            return;
+        }
+        "--fzf-opts" => {
+            if args.len() > 2 {
+                let mut config = load_config();
+                let value = args[2..].join(" ");
+                match split_option_string(&value) {
+                    Ok(_) => {
+                        config.fzf_opts = Some(value);
+                        if save_config(&config).is_ok() {
+                            eprintln!("fzf options updated");
+                        }
+                    }
+                    Err(error) => eprintln!("Invalid fzf options: {}", error),
+                }
+            } else if let Ok(value) = env::var("J_FZF_OPTS") {
+                eprintln!("fzf options (J_FZF_OPTS): {}", value);
+            } else if let Some(value) = &config.fzf_opts {
+                eprintln!("fzf options: {}", value);
+            } else {
+                eprintln!("fzf options: default");
+            }
+            return;
+        }
+        "--fzf-opts-clear" => {
+            let mut config = load_config();
+            config.fzf_opts = None;
+            if save_config(&config).is_ok() {
+                eprintln!("fzf options cleared");
             }
             return;
         }
@@ -640,9 +1060,7 @@ fn main() {
         }
         "-x" => {
             if let Some(ref cur) = current_dir {
-                let before_len = state.history.len();
-                state.history.retain(|e| !e.path.eq_ignore_ascii_case(cur));
-                if state.history.len() < before_len {
+                if remove_history_path(&mut state, cur) {
                     save_state(&state).ok();
                     eprintln!("Removed: {}", cur);
                 } else {
@@ -691,9 +1109,22 @@ fn main() {
             return;
         }
         "--list" | "-l" => {
-            let count = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(20);
-            for (i, entry) in state.history.iter().rev().take(count).enumerate() {
-                eprintln!("{:2}. {} ({} visits)", i + 1, entry.path, entry.visit_count);
+            let keyword = if args.len() > 2 {
+                args[2..].join(" ")
+            } else {
+                String::new()
+            };
+            match select_history(&mut state, &keyword) {
+                Ok(Some(path)) => {
+                    if let Some(ref cur) = current_dir {
+                        push_undo(&mut state, cur);
+                    }
+                    add_to_history(&mut state, &path);
+                    save_state(&state).ok();
+                    println!("{}", path);
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("Cannot open history selector: {}", error),
             }
             return;
         }
@@ -762,6 +1193,7 @@ fn main() {
             eprintln!("  j <keyword>        Jump to directory matching keyword");
             eprintln!("  j <kw1> <kw2> ...  Jump using multiple keywords (in order)");
             eprintln!("  j -i [keyword]     Interactive selection with fzf");
+            eprintln!("  j init <shell>     Generate shell integration");
             eprintln!("  j !<alias>         Jump to aliased directory");
             eprintln!("  j ~<path>          Jump to path under home directory");
             eprintln!();
@@ -772,8 +1204,7 @@ fn main() {
             eprintln!("  j -c               Record current directory to history");
             eprintln!("  j -x               Remove current directory from history");
             eprintln!("  j -xa              Clear all history");
-            eprintln!("  j -l [N]           List history (default 20)");
-            eprintln!("  j -N               Jump to Nth entry (e.g., j -1, j -5)");
+            eprintln!("  j -l [keyword]     Select from 20 recent matches (x deletes)");
             eprintln!();
             eprintln!("Aliases:");
             eprintln!("  j -a <n>        Create alias for current directory");
@@ -784,6 +1215,11 @@ fn main() {
             eprintln!("  j --exclude-add <pattern>    Add exclude pattern");
             eprintln!("  j --exclude-remove <pattern> Remove exclude pattern");
             eprintln!("  j --exclude-list             List exclude patterns");
+            eprintln!();
+            eprintln!("Configuration:");
+            eprintln!("  j --ranking [mode]           recent, frecency, or frequency");
+            eprintln!("  j --fzf-opts [options]       Show or set fzf options");
+            eprintln!("  j --fzf-opts-clear           Restore default fzf options");
             eprintln!();
             eprintln!("Examples:");
             eprintln!("  j src              Jump to 'src' directory");
@@ -797,31 +1233,6 @@ fn main() {
         }
 
         _ => {}
-    }
-    
-    if arg.starts_with('-') {
-        if let Ok(num) = arg[1..].parse::<usize>() {
-            if num > 0 {
-                let index = num - 1;
-                let history_len = state.history.len();
-                if index < history_len {
-                    let target_path = state.history[history_len - 1 - index].path.clone();
-                    if Path::new(&target_path).is_dir() {
-                        if let Some(ref cur) = current_dir {
-                            push_undo(&mut state, cur);
-                        }
-                        add_to_history(&mut state, &target_path);
-                        save_state(&state).ok();
-                        println!("{}", target_path);
-                    } else {
-                        eprintln!("Directory not found: {}", target_path);
-                    }
-                } else {
-                    eprintln!("History entry {} does not exist (history size: {})", num, history_len);
-                }
-                return;
-            }
-        }
     }
     
     if arg.starts_with('!') {
@@ -1006,4 +1417,217 @@ fn main() {
     }
     
     eprintln!("Directory not found: {}", search_keyword);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn history_entry(path: &str, timestamp: i64, visit_count: u32) -> HistoryEntry {
+        HistoryEntry {
+            path: path.to_string(),
+            last_visited: Utc.timestamp_opt(timestamp, 0).unwrap(),
+            visit_count,
+        }
+    }
+
+    #[test]
+    fn old_config_defaults_to_recent_ranking() {
+        let config: Config = serde_json::from_str(r#"{"excludes":["tmp"]}"#).unwrap();
+        assert_eq!(config.ranking, Ranking::Recent);
+        assert_eq!(config.fzf_opts, None);
+    }
+
+    #[test]
+    fn option_string_supports_quoted_fzf_values() {
+        let args = split_option_string(r#"--height 60% --prompt "jump> " --border"#).unwrap();
+        assert_eq!(
+            args,
+            vec!["--height", "60%", "--prompt", "jump> ", "--border"]
+        );
+        assert!(split_option_string(r#"--prompt "jump> "#).is_err());
+    }
+
+    #[test]
+    fn ranking_modes_preserve_recent_default_and_allow_frequency() {
+        let now = Utc.timestamp_opt(1_000_000, 0).unwrap();
+        let state = AppState {
+            history: vec![
+                history_entry("frequent", 900_000, 20),
+                history_entry("recent", 999_999, 1),
+            ],
+            ..AppState::default()
+        };
+        let mut config = Config::default();
+
+        let recent = ranked_history_entries(&state, &config, now);
+        assert_eq!(recent[0].path, "recent");
+
+        config.ranking = Ranking::Frequency;
+        let frequency = ranked_history_entries(&state, &config, now);
+        assert_eq!(frequency[0].path, "frequent");
+
+        config.ranking = Ranking::Frecency;
+        let frecency = ranked_history_entries(&state, &config, now);
+        assert_eq!(frecency[0].path, "frequent");
+    }
+
+    #[test]
+    fn pruning_only_removes_missing_entries_older_than_ninety_days() {
+        let now = Utc.timestamp_opt(20_000_000, 0).unwrap();
+        let test_root = env::temp_dir().join(format!(
+            "j-cmd-prune-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        fs::create_dir_all(&test_root).unwrap();
+        let old = now - Duration::days(MISSING_HISTORY_RETENTION_DAYS + 1);
+        let recent = now - Duration::days(MISSING_HISTORY_RETENTION_DAYS - 1);
+        let mut state = AppState {
+            history: vec![
+                HistoryEntry {
+                    path: test_root.to_string_lossy().into_owned(),
+                    last_visited: old,
+                    visit_count: 1,
+                },
+                HistoryEntry {
+                    path: test_root.join("missing-old").to_string_lossy().into_owned(),
+                    last_visited: old,
+                    visit_count: 1,
+                },
+                HistoryEntry {
+                    path: test_root
+                        .join("missing-recent")
+                        .to_string_lossy()
+                        .into_owned(),
+                    last_visited: recent,
+                    visit_count: 1,
+                },
+            ],
+            ..AppState::default()
+        };
+
+        assert_eq!(prune_stale_missing_history(&mut state, now), 1);
+        assert_eq!(state.history.len(), 2);
+        assert!(state.history.iter().any(|entry| entry.path == test_root.to_string_lossy()));
+        assert!(state
+            .history
+            .iter()
+            .any(|entry| entry.path.ends_with("missing-recent")));
+        fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn sort_history_by_recency_places_newest_last() {
+        let mut history = vec![
+            history_entry("newest", 300, 1),
+            history_entry("oldest", 100, 1),
+            history_entry("middle", 200, 1),
+        ];
+
+        sort_history_by_recency(&mut history);
+
+        let paths: Vec<&str> = history.iter().map(|entry| entry.path.as_str()).collect();
+        assert_eq!(paths, vec!["oldest", "middle", "newest"]);
+    }
+
+    #[test]
+    fn revisiting_history_entry_moves_it_to_newest_position() {
+        let mut state = AppState {
+            history: vec![
+                history_entry("first", 100, 1),
+                history_entry("second", 200, 1),
+            ],
+            ..AppState::default()
+        };
+
+        add_to_history(&mut state, "first");
+
+        let paths: Vec<&str> = state
+            .history
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect();
+        assert_eq!(paths, vec!["second", "first"]);
+        assert_eq!(state.history.last().unwrap().visit_count, 2);
+    }
+
+    #[test]
+    fn search_prefers_most_recently_used_matching_directory() {
+        let test_root = env::temp_dir().join(format!(
+            "j-cmd-history-order-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let older = test_root.join("older").join("project");
+        let newer = test_root.join("newer").join("project");
+        fs::create_dir_all(&older).unwrap();
+        fs::create_dir_all(&newer).unwrap();
+
+        let mut state = AppState {
+            history: vec![
+                history_entry(newer.to_str().unwrap(), 200, 1),
+                history_entry(older.to_str().unwrap(), 100, 1),
+            ],
+            ..AppState::default()
+        };
+        sort_history_by_recency(&mut state.history);
+
+        let found = search_history(&state, "project", &Config::default());
+
+        assert_eq!(found.as_deref(), newer.to_str());
+        fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn history_list_filters_full_paths_and_keeps_recent_first() {
+        let state = AppState {
+            history: vec![
+                history_entry("C:\\work\\archive", 100, 1),
+                history_entry("C:\\work\\project", 200, 1),
+                history_entry("D:\\other\\project", 300, 1),
+            ],
+            ..AppState::default()
+        };
+
+        let candidates = history_list_candidates(&state, "WORK");
+
+        assert_eq!(
+            candidates,
+            vec!["C:\\work\\project", "C:\\work\\archive"]
+        );
+    }
+
+    #[test]
+    fn history_list_is_limited_to_twenty_most_recent_entries() {
+        let state = AppState {
+            history: (0..25)
+                .map(|index| history_entry(&format!("history-{index}"), index, 1))
+                .collect(),
+            ..AppState::default()
+        };
+
+        let candidates = history_list_candidates(&state, "");
+
+        assert_eq!(candidates.len(), HISTORY_LIST_LIMIT);
+        assert_eq!(candidates.first().unwrap(), "history-24");
+        assert_eq!(candidates.last().unwrap(), "history-5");
+    }
+
+    #[test]
+    fn removing_selected_history_path_is_case_insensitive() {
+        let mut state = AppState {
+            history: vec![
+                history_entry("C:\\work\\first", 100, 1),
+                history_entry("C:\\work\\second", 200, 1),
+            ],
+            ..AppState::default()
+        };
+
+        assert!(remove_history_path(&mut state, "c:\\WORK\\FIRST"));
+        assert_eq!(state.history.len(), 1);
+        assert_eq!(state.history[0].path, "C:\\work\\second");
+        assert!(!remove_history_path(&mut state, "C:\\work\\missing"));
+    }
 }

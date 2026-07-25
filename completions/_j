@@ -11,10 +11,12 @@ _j() {
 
     options=(
         '-i:Interactive selection with fzf'
+        'init:Generate shell integration'
         '-c:Record current directory to history'
         '-x:Remove current directory from history'
         '-xa:Clear all history'
-        '-l:List history'
+        '-l:Select from history (optional keyword filter)'
+        '--list:Select from history (optional keyword filter)'
         '-a:Create alias for current directory'
         '-ar:Remove alias'
         '-al:List aliases'
@@ -25,16 +27,40 @@ _j() {
         '--exclude-add:Add exclude pattern'
         '--exclude-remove:Remove exclude pattern'
         '--exclude-list:List exclude patterns'
+        '--ranking:Set ranking mode'
+        '--fzf-opts:Set fzf options'
+        '--fzf-opts-clear:Restore default fzf options'
         '--complete:Output matching paths'
     )
 
-    if [[ "${words[2]}" == -* ]]; then
+    if [[ "${words[2]}" == "init" ]]; then
+        if (( CURRENT == 3 )); then
+            _values 'shell' zsh bash powershell
+        elif [[ "${words[CURRENT-1]}" == "--cmd" ]]; then
+            _values 'command' j cd
+        else
+            _values 'init option' '--cmd[replace command name]'
+        fi
+        return
+    fi
+
+    if [[ "${words[CURRENT-1]}" == "--ranking" ]]; then
+        _values 'ranking' recent frecency frequency
+        return
+    fi
+
+    if (( CURRENT == 2 )) && [[ "${words[CURRENT]}" == -* ]]; then
         _describe 'options' options
         return
     fi
 
     # Get completions from j --complete
-    local keyword="${words[2,-1]}"
+    local keyword
+    if [[ "${words[2]}" == "-l" || "${words[2]}" == "--list" ]]; then
+        keyword="${words[3,-1]}"
+    else
+        keyword="${words[2,-1]}"
+    fi
     completions=(${(f)"$(j --complete $keyword 2>/dev/null)"})
     
     if [[ -n "$completions" ]]; then

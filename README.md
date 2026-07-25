@@ -1,7 +1,7 @@
 # j - Fast Directory Jump
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/your-username/j-cmd)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/your-username/j-cmd)
 
 A fast directory jump command for Windows, Linux, and macOS.
 
@@ -74,7 +74,24 @@ sudo cp target/release/j /usr/local/bin/
 
 ### zsh (Recommended)
 
-Add to `~/.zshrc`:
+`j init` generates integration for the installed binary. By default it adds the `j` command without replacing the shell's standard `cd`.
+
+```zsh
+autoload -Uz compinit
+compinit
+eval "$(j init zsh)"
+
+# Use this instead only when you want j-cmd to extend cd
+# eval "$(j init zsh --cmd cd)"
+```
+
+You can also source `j-init.zsh` from the repository. This file preserves the legacy behavior of extending `cd`.
+
+```zsh
+source /path/to/j-cmd/j-init.zsh
+```
+
+For manual configuration, add the following to `~/.zshrc`:
 
 ```zsh
 # j binary path
@@ -98,31 +115,31 @@ cd() {
 
     case "$arg" in
         -)
-            result=$($J_CMD - 2>&1)
+            result=$($J_CMD -)
             [[ -d "$result" ]] && builtin cd "$result"
             return
             ;;
         +)
-            result=$($J_CMD + 2>&1)
+            result=$($J_CMD +)
             [[ -d "$result" ]] && builtin cd "$result" || echo "$result"
             return
             ;;
         .)
-            result=$($J_CMD . 2>&1)
+            result=$($J_CMD .)
             [[ -d "$result" ]] && builtin cd "$result" || echo "$result"
             return
             ;;
-        -c|-x|-xa|-l|--list|-a|-ar|-al|-h|--help|-V|--version)
+        -c|-x|-xa|-a|-ar|-al|-h|--help|-V|--version|init|--ranking|--fzf-opts|--fzf-opts-clear)
             $J_CMD "$@"
             return
             ;;
-        -[0-9]|-[0-9][0-9]|-[0-9][0-9][0-9])
-            result=$($J_CMD "$arg" 2>&1)
+        -l|--list)
+            result=$($J_CMD "$@")
             [[ -d "$result" ]] && builtin cd "$result" || echo "$result"
             return
             ;;
         \!*)
-            result=$($J_CMD "$arg" 2>&1)
+            result=$($J_CMD "$arg")
             [[ -d "$result" ]] && builtin cd "$result" || echo "$result"
             return
             ;;
@@ -132,7 +149,7 @@ cd() {
         return
     fi
 
-    result=$($J_CMD "$@" 2>&1)
+    result=$($J_CMD "$@")
     [[ -d "$result" ]] && builtin cd "$result" || builtin cd "$@"
 }
 
@@ -146,12 +163,23 @@ source ~/.zshrc
 
 ### bash
 
-Add to `~/.bashrc`:
+Add generated integration to `~/.bashrc`:
+
+```bash
+eval "$(j init bash)"
+
+# Use this instead only when you want j-cmd to extend cd
+# eval "$(j init bash --cmd cd)"
+```
+
+The repository setup file can be loaded with `source /path/to/j-cmd/j-init.sh`.
+
+For manual configuration:
 
 ```bash
 j() {
     local result
-    result=$(/usr/local/bin/j "$@" 2>&1)
+    result=$(/usr/local/bin/j "$@")
     if [ -d "$result" ]; then
         builtin cd "$result"
     elif [ -n "$result" ]; then
@@ -167,7 +195,18 @@ source ~/.bashrc
 
 ### PowerShell (Windows)
 
-Add to your `$PROFILE`:
+Add generated integration to your `$PROFILE`:
+
+```powershell
+Invoke-Expression (& j.exe init powershell | Out-String)
+
+# Use this instead only when you want j-cmd to extend cd
+# Invoke-Expression (& j.exe init powershell --cmd cd | Out-String)
+```
+
+The repository setup file can be loaded with `. C:\path\to\j-cmd\j-init.ps1`.
+
+For manual configuration:
 
 ```powershell
 function j {
@@ -177,9 +216,9 @@ function j {
     [Console]::InputEncoding = [System.Text.Encoding]::UTF8
     try {
         if ($args.Count -eq 0) {
-            $result = & j.exe 2>&1
+            $result = & j.exe
         } else {
-            $result = & j.exe @args 2>&1
+            $result = & j.exe @args
         }
         
         if ($result -is [array]) {
@@ -210,6 +249,82 @@ Register auto-run in registry:
 
 ```cmd
 reg add "HKCU\Software\Microsoft\Command Processor" /v AutoRun /t REG_SZ /d "C:\path\to\j-init.cmd" /f
+```
+
+### When Tab completion stops working
+
+Replacing `cd` with a function, or loading fzf and other shell plugins, can overwrite completion definitions or the Tab key binding. As a rule, initialize `compinit` or bash-completion and fzf first, then load the j-cmd completion last.
+
+#### zsh
+
+Copying only the shell functions into `.zshrc` does not register the j-cmd completion function. To enable Tab completion, load the generated integration in this order:
+
+```zsh
+# 1. Initialize the zsh completion system
+autoload -Uz compinit
+compinit
+
+# 2. Initialize fzf and other plugins here
+# source ~/.fzf.zsh
+
+# 3. Load j-cmd last (without replacing the standard cd)
+eval "$(j init zsh)"
+```
+
+If another plugin has already overwritten completion for `cd` or `j`, re-register it at the end of `.zshrc`:
+
+```zsh
+compdef _j_generated_complete j
+# Only when using --cmd cd:
+# compdef _j_generated_complete cd
+```
+
+Check the current definitions with:
+
+```zsh
+type cd
+print -r -- "${_comps[cd]}"
+bindkey '^I'
+```
+
+When using `--cmd cd`, if `_comps[cd]` is not `_j_generated_complete`, fix the load order or run `compdef` again. Only when Tab is reported as `undefined-key`, restore standard completion with `bindkey '^I' expand-or-complete`. When using fzf-tab or another intentional Tab widget, leave the key binding unchanged and only re-register `compdef`.
+
+If stale completion definitions remain, remove `.zcompdump`, restart the shell, and load `compinit` and the generated `j init zsh` integration again.
+
+#### bash
+
+Load bash-completion and fzf first, then load the j-cmd completion file last:
+
+```bash
+# Initialize your distribution's bash-completion and fzf first
+# source /usr/share/bash-completion/bash_completion
+# source ~/.fzf.bash
+
+eval "$(j init bash)"
+
+# To load only completion without generated integration:
+# source /path/to/j-cmd/completions/j.bash
+```
+
+If another configuration overwrites the completion, re-register it at the end of `.bashrc`:
+
+```bash
+complete -F _j_generated_complete j
+# Only when using --cmd cd:
+# complete -F _j_generated_complete cd
+complete -p j
+```
+
+#### Using fzf
+
+`j -i` only requires the `fzf` executable to be available on PATH. fzf's shell key bindings and completion scripts are optional. If fzf shell integration breaks normal Tab completion, omit that integration and continue using `j -i`, or re-register the j-cmd completion after initializing fzf. The `j -l` history selector does not use fzf.
+
+#### PowerShell
+
+On PowerShell, use the default `j init powershell` integration without replacing `cd`. It registers completion only for `j` and `ji`, preserving normal `cd` / `Set-Location` path completion. After changing your profile, start a new PowerShell session or reload it with:
+
+```powershell
+. $PROFILE
 ```
 
 ## Usage
@@ -254,10 +369,12 @@ cd d:proj           # Search "proj" in D: drive
 | `cd -c` | Record current directory to history |
 | `cd -x` | Remove current directory from history |
 | `cd -xa` | Clear all history |
-| `cd -l` | List history (default 20 entries) |
-| `cd -l 10` | List 10 history entries |
-| `cd -1` | Jump to 1st (most recent) history entry |
-| `cd -5` | Jump to 5th history entry |
+| `cd -l` | Select from the 20 most recent history entries |
+| `cd -l proj` | Select from the 20 most recent paths containing `proj` |
+
+In the history selector, use `↑` / `↓` to move, `Enter` to jump, and `x` to delete the selected entry and refresh the list. Press `Esc` or `q` to cancel.
+
+Missing history entries are not removed immediately. To protect temporarily disconnected network or external drives, j-cmd only prunes entries that are still missing more than 90 days after their last use.
 
 ### Aliases
 
@@ -271,6 +388,8 @@ cd d:proj           # Search "proj" in D: drive
 ### Interactive Mode (fzf integration)
 
 Install fzf to enable interactive selection from history.
+
+When fzf is available, `cd -i [keyword]` is recommended for normal history searches and selection. Use `cd -l [keyword]` as a fallback when fzf is unavailable, to inspect the 20 most recent entries, or to delete missing and unwanted entries with the `x` key.
 
 ```bash
 cd -i               # Select from all history with fzf
@@ -322,8 +441,8 @@ cd -             # Go back to previous directory
 cd +             # Go forward to /work/project/src again
 
 # Select from history
-cd -l            # List history
-cd -3            # Jump to 3rd history entry
+cd -l            # Select from all history
+cd -l project    # Select from history containing "project"
 ```
 
 ## Matching Rules
@@ -349,6 +468,39 @@ Configuration is stored in `~/.config/j/`:
 ├── state.json      # History and undo/redo stack
 ├── aliases.json    # Aliases
 └── config.json     # Exclude patterns and settings
+```
+
+### Ranking
+
+Configure the candidate order used by normal searches and `-i`. The default is `recent`, which prioritizes the most recently used entries.
+
+```bash
+j --ranking              # Show the current setting
+j --ranking recent       # Prioritize last-used time (default)
+j --ranking frecency     # Combine frequency and recency
+j --ranking frequency    # Prioritize visit count
+```
+
+`-l` always lists the 20 most recent entries, regardless of the ranking setting.
+
+### fzf Options
+
+Pass additional options to fzf when using `-i`.
+
+```bash
+j --fzf-opts '--height 60% --reverse --border'
+j --fzf-opts             # Show the current setting
+j --fzf-opts-clear       # Remove the setting
+```
+
+When set, the `J_FZF_OPTS` environment variable takes precedence over `fzf_opts` in `config.json`.
+
+```json
+{
+  "excludes": ["node_modules", ".git"],
+  "ranking": "recent",
+  "fzf_opts": "--height 60% --reverse --border"
+}
 ```
 
 ## Uninstall

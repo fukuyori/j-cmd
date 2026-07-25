@@ -65,10 +65,13 @@ j +             # 次のディレクトリへ (Redo)
 ### 履歴から直接選択
 
 ```cmd
-j -l            # 履歴一覧を表示
-j -l 10         # 10件表示
-j -3            # 履歴の3番目に移動
+j -l             # 直近20件の履歴から上下キーで選択
+j -l project     # "project" を含む直近20件から選択
 ```
+
+選択中は `Enter` で移動し、`x` で選択中の履歴を削除して一覧を再表示します。
+
+通常の検索順は、直近で使用した履歴を優先します。必要に応じて`j --ranking frecency`で使用回数と新しさを組み合わせたり、`j --ranking frequency`で使用回数を優先したりできます。`-l`は設定に関係なく、常に新しいものから20件です。
 
 ## 使い分け
 
@@ -95,7 +98,13 @@ cargo build --release
 reg add "HKCU\Software\Microsoft\Command Processor" /v AutoRun /t REG_SZ /d "C:\path\to\j-init.cmd" /f
 ```
 
-PowerShellの場合は `$PROFILE` に関数を追加します。詳細はREADMEを参照してください。
+zsh、bash、PowerShellでは`j init`でシェル設定を生成できます。既定では標準の`cd`を置き換えません。
+
+```powershell
+Invoke-Expression (& j.exe init powershell | Out-String)
+```
+
+`cd`もj-cmdで拡張したい場合だけ、`j init powershell --cmd cd`を使用します。zshとbashも同様に`j init zsh`、`j init bash`をシェルの設定ファイルから評価できます。
 
 ## 技術的なポイント
 
@@ -107,7 +116,11 @@ PowerShellの場合は `$PROFILE` に関数を追加します。詳細はREADME�
 
 ### 履歴の管理
 
-履歴は `%APPDATA%\j-cmd\state.json` に保存されます。最大1000件で、訪問回数と最終訪問日時でスコアリングし、古いエントリから削除されます。
+履歴は `~/.config/j/state.json` に保存されます。最大1000件で、直近の使用を既定の検索順にします。存在しない履歴はすぐには消さず、最後の使用から90日を超えたものだけを起動時に自動整理します。
+
+検索順は`j --ranking recent`（既定）、`j --ranking frecency`、`j --ranking frequency`から選べます。`-l`の表示は設定に関係なく、常に直近20件です。
+
+fzfを使う`j -i`の表示は`j --fzf-opts`または`config.json`の`fzf_opts`で調整できます。環境変数`J_FZF_OPTS`を設定した場合は、設定ファイルより優先されます。fzfのシェル統合は必須ではなく、`j -i`にはfzf実行ファイルだけが必要です。
 
 ### マッチングロジック
 
@@ -139,8 +152,12 @@ PowerShellの場合は `$PROFILE` に関数を追加します。詳細はREADME�
 | `j -` | 前のディレクトリへ (Undo) |
 | `j +` | 次のディレクトリへ (Redo) |
 | `j .` | 最後に訪問したディレクトリへ |
-| `j -l` | 履歴一覧を表示 |
-| `j -N` | 履歴のN番目に移動 |
+| `j -l` | 直近20件の履歴から選択して移動 |
+| `j -l key` | `key` を含む直近20件の履歴から選択 |
+| `j -i [key]` | fzfで履歴を検索・選択 |
 | `j -c` | 現在地を履歴に記録 |
 | `j -x` | 現在地を履歴から削除 |
 | `j -xa` | 履歴を全消去 |
+| `j init zsh\|bash\|powershell` | シェル統合を生成 |
+| `j --ranking [mode]` | 検索順を表示・変更 |
+| `j --fzf-opts [options]` | fzfの追加オプションを表示・変更 |
