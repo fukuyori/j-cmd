@@ -79,11 +79,13 @@ sudo cp target/release/j /usr/local/bin/
 ```zsh
 autoload -Uz compinit
 compinit
-eval "$(j init zsh)"
+eval "$(command j init zsh)"
 
 # Use this instead only when you want j-cmd to extend cd
-# eval "$(j init zsh --cmd cd)"
+# eval "$(command j init zsh --cmd cd)"
 ```
+
+Using `command j` invokes the `j` executable directly instead of an alias or function with the same name. This is especially important when reloading `.zshrc` while a `j()` function from the legacy manual setup is still defined in the current shell.
 
 You can also source `j-init.zsh` from the repository. This file preserves the legacy behavior of extending `cd`.
 
@@ -268,7 +270,7 @@ compinit
 # source ~/.fzf.zsh
 
 # 3. Load j-cmd last (without replacing the standard cd)
-eval "$(j init zsh)"
+eval "$(command j init zsh)"
 ```
 
 If another plugin has already overwritten completion for `cd` or `j`, re-register it at the end of `.zshrc`:

@@ -79,11 +79,13 @@ sudo cp target/release/j /usr/local/bin/
 ```zsh
 autoload -Uz compinit
 compinit
-eval "$(j init zsh)"
+eval "$(command j init zsh)"
 
 # cdもj-cmdで拡張する場合だけ、代わりにこちらを使用
-# eval "$(j init zsh --cmd cd)"
+# eval "$(command j init zsh --cmd cd)"
 ```
+
+`command j`と記述することで、同名のエイリアスや関数を経由せず、`j`実行ファイルを直接呼び出します。特に、従来の手動設定で定義された`j()`関数が現在のシェルに残ったまま`.zshrc`を再読み込みする場合に必要です。
 
 リポジトリ内の`j-init.zsh`を読み込む方法もあります。このファイルは従来どおり`cd`を拡張します。
 
@@ -268,7 +270,7 @@ compinit
 # source ~/.fzf.zsh
 
 # 3. j-cmdは最後に読み込む（標準のcdは置き換えない）
-eval "$(j init zsh)"
+eval "$(command j init zsh)"
 ```
 
 すでに`cd`やTab補完が別のプラグインに上書きされている場合は、`.zshrc`の末尾で再登録できます。
