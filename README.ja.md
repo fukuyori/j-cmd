@@ -1,7 +1,7 @@
 # j - 高速ディレクトリジャンプ
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/your-username/j-cmd)
+[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/your-username/j-cmd)
 
 Windows、Linux、macOS 対応の高速ディレクトリジャンプコマンド
 
@@ -332,10 +332,10 @@ PowerShellでは`j init powershell`の既定設定を使い、`cd`を置き換�
 ### 基本操作
 
 ```bash
-cd                  # ホームディレクトリへ
-cd /var/log         # 通常のcd
-cd proj             # "proj" を含むディレクトリへ（キーワード検索）
-cd proj/src         # "proj" と "src" を含むパスへ
+j                  # ホームディレクトリへ
+cd /var/log         # 明示的なパスは通常のcd
+j proj              # "proj" を含むディレクトリへ（キーワード検索）
+j proj/src          # "proj" と "src" を含むパスへ
 ```
 
 ### 複数キーワード検索
@@ -343,34 +343,34 @@ cd proj/src         # "proj" と "src" を含むパスへ
 スペース区切りで複数のキーワードを指定できます。キーワードは**順序通り**にマッチします。
 
 ```bash
-cd first one        # "first" の後に "one" が来るパスへ
+j first one         # "first" の後に "one" が来るパスへ
                     # 例: /home/first/project/one → ✅ マッチ
                     #     /home/one/project/first → ❌ 順序が違う
                     #     /home/second/project/one → ❌ "first" がない
 
-cd work api src     # work → api → src の順で含むパスへ
+j work api src      # work → api → src の順で含むパスへ
                     # 例: /home/work/myapp/api/src → ✅ マッチ
 ```
 
 ### ドライブ指定（Windows のみ）
 
 ```cmd
-cd d:               # D: ドライブのルートへ
-cd d:proj           # D: ドライブ内の "proj" を検索
+j d:                # D: ドライブのルートへ
+j d:proj            # D: ドライブ内の "proj" を検索
 ```
 
 ### 履歴操作
 
 | コマンド | 説明 |
 |---------|------|
-| `cd -` | 前のディレクトリに戻る（Undo） |
-| `cd +` | 次のディレクトリへ進む（Redo） |
-| `cd .` | 最後に訪問したディレクトリへ |
-| `cd -c` | 現在のディレクトリを履歴に記録 |
-| `cd -x` | 現在のディレクトリを履歴から削除 |
-| `cd -xa` | 履歴を全て消去 |
-| `cd -l` | 直近20件の履歴から上下キーで選択して移動 |
-| `cd -l proj` | パスに `proj` を含む直近20件の履歴から選択 |
+| `j -` | 前のディレクトリに戻る（Undo） |
+| `j +` | 次のディレクトリへ進む（Redo） |
+| `j .` | 最後に訪問したディレクトリへ |
+| `j -c` | 現在のディレクトリを履歴に記録 |
+| `j -x` | 現在のディレクトリを履歴から削除 |
+| `j -xa` | 履歴を全て消去 |
+| `j -l` | 直近20件の履歴から上下キーで選択して移動 |
+| `j -l proj` | 最後のフォルダ名に `proj` を含む直近20件の履歴から選択 |
 
 履歴選択画面では、`↑` / `↓` で選択、`Enter` で移動、`x` で選択中の履歴を削除して一覧を再表示します。`Esc` または `q` でキャンセルできます。
 
@@ -380,22 +380,22 @@ cd d:proj           # D: ドライブ内の "proj" を検索
 
 | コマンド | 説明 |
 |---------|------|
-| `cd -a doc` | 現在のディレクトリに "doc" エイリアスを登録 |
-| `cd !doc` | エイリアス "doc" に移動 |
-| `cd -ar doc` | エイリアス "doc" を削除 |
-| `cd -al` | エイリアス一覧を表示 |
+| `j -a doc` | 現在のディレクトリに "doc" エイリアスを登録 |
+| `j !doc` | エイリアス "doc" に移動 |
+| `j -ar doc` | エイリアス "doc" を削除 |
+| `j -al` | エイリアス一覧を表示 |
 
 ### インタラクティブモード（fzf連携）
 
 fzf をインストールすると、インタラクティブに候補を選択できます。
 
-fzfが利用できる場合、通常の履歴検索・選択には`cd -i [キーワード]`を推奨します。`cd -l [キーワード]`は、fzfがない環境での選択、直近20件の確認、存在しない履歴や不要な履歴を`x`キーで削除する場合に使用してください。
+fzfが利用できる場合、通常の履歴検索・選択には`j -i [キーワード]`を推奨します。`j -l [キーワード]`は、fzfがない環境での選択、直近20件の確認、存在しない履歴や不要な履歴を`x`キーで削除する場合に使用してください。
 
 ```bash
-cd -i               # 全履歴からfzfで選択
-cd -i proj          # "proj" でフィルタしてfzfで選択
-ji                  # cd -i の短縮形（zsh）
-ji proj             # cd -i proj の短縮形
+j -i                # 全履歴からfzfで選択
+j -i proj           # "proj" でフィルタしてfzfで選択
+ji                  # j -i の短縮形
+ji proj             # j -i proj の短縮形
 ```
 
 fzf のインストール:
@@ -426,23 +426,23 @@ j --exclude-remove node_modules  # 除外解除
 
 ```bash
 # プロジェクトディレクトリへ移動
-cd myproject
+j myproject
 
 # エイリアス登録
 cd ~/Documents
-cd -a doc
+j -a doc
 
 # エイリアスで移動
-cd !doc
+j !doc
 
 # Undo/Redo
-cd src           # /work/project/src へ移動
-cd -             # 元のディレクトリへ戻る
-cd +             # /work/project/src へ再び移動
+j src            # /work/project/src へ移動
+j -              # 元のディレクトリへ戻る
+j +              # /work/project/src へ再び移動
 
 # 履歴から選択
-cd -l            # 全履歴から選択
-cd -l project    # "project" を含む履歴から選択
+j -l             # 直近20件から選択
+j -l project     # "project" を含む直近20件から選択
 ```
 
 ## マッチングルール
@@ -456,8 +456,8 @@ cd -l project    # "project" を含む履歴から選択
 - **複数キーワードは指定した順序でマッチ**
 
 例：
-- `cd rust` は `/work/rust` にマッチするが `/work/rust/src` にはマッチしない
-- `cd work rust` は `/home/work/project/rust` にマッチするが `/home/rust/project/work` にはマッチしない
+- `j rust` は `/work/rust` にマッチするが `/work/rust/src` にはマッチしない
+- `j work rust` は `/home/work/project/rust` にマッチするが `/home/rust/project/work` にはマッチしない
 
 ## 設定ファイル
 

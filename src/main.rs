@@ -377,7 +377,12 @@ fn history_list_candidates(state: &AppState, keyword: &str) -> Vec<String> {
         .history
         .iter()
         .rev()
-        .filter(|entry| keyword.is_empty() || entry.path.to_lowercase().contains(&keyword))
+        .filter(|entry| {
+            keyword.is_empty()
+                || split_path(&entry.path)
+                    .last()
+                    .is_some_and(|name| name.to_lowercase().contains(&keyword))
+        })
         .take(HISTORY_LIST_LIMIT)
         .map(|entry| entry.path.clone())
         .collect()
@@ -868,6 +873,13 @@ fn add_to_history(state: &mut AppState, path: &str) {
     }
 }
 
+fn record_jump(state: &mut AppState, current_dir: Option<&str>, destination: &str) {
+    if let Some(current_dir) = current_dir {
+        push_undo(state, current_dir);
+    }
+    add_to_history(state, destination);
+}
+
 fn push_undo(state: &mut AppState, path: &str) {
     state.undo_stack.push_back(path.to_string());
     if state.undo_stack.len() > MAX_UNDO_STACK {
@@ -938,11 +950,13 @@ fn main() {
             }
             if let Some(selected) = run_fzf(&candidates, &keyword, &config) {
                 if Path::new(&selected).is_dir() {
-                    if let Some(ref cur) = current_dir {
-                        push_undo(&mut state, cur);
+                    // fzf may stay open for a while. Reload immediately before
+                    // saving so another shell's newer history is not overwritten.
+                    state = load_state();
+                    record_jump(&mut state, current_dir.as_deref(), &selected);
+                    if let Err(error) = save_state(&state) {
+                        eprintln!("Failed to update history: {}", error);
                     }
-                    add_to_history(&mut state, &selected);
-                    save_state(&state).ok();
                     println!("{}", selected);
                 }
             }
@@ -1204,7 +1218,7 @@ fn main() {
             eprintln!("  j -c               Record current directory to history");
             eprintln!("  j -x               Remove current directory from history");
             eprintln!("  j -xa              Clear all history");
-            eprintln!("  j -l [keyword]     Select from 20 recent matches (x deletes)");
+            eprintln!("  j -l [keyword]     Select from 20 recent name matches (x deletes)");
             eprintln!();
             eprintln!("Aliases:");
             eprintln!("  j -a <n>        Create alias for current directory");
@@ -1474,6 +1488,23 @@ mod tests {
     }
 
     #[test]
+    fn interactive_jump_records_selected_path_as_most_recent() {
+        let mut state = AppState {
+            history: vec![
+                history_entry("selected", 100, 3),
+                history_entry("other", 200, 1),
+            ],
+            ..AppState::default()
+        };
+
+        record_jump(&mut state, Some("current"), "selected");
+
+        assert_eq!(state.history.last().unwrap().path, "selected");
+        assert_eq!(state.history.last().unwrap().visit_count, 4);
+        assert_eq!(state.undo_stack.back().map(String::as_str), Some("current"));
+    }
+
+    #[test]
     fn pruning_only_removes_missing_entries_older_than_ninety_days() {
         let now = Utc.timestamp_opt(20_000_000, 0).unwrap();
         let test_root = env::temp_dir().join(format!(
@@ -1581,22 +1612,23 @@ mod tests {
     }
 
     #[test]
-    fn history_list_filters_full_paths_and_keeps_recent_first() {
+    fn history_list_filters_final_directory_names_and_keeps_recent_first() {
         let state = AppState {
             history: vec![
-                history_entry("C:\\work\\archive", 100, 1),
-                history_entry("C:\\work\\project", 200, 1),
-                history_entry("D:\\other\\project", 300, 1),
+                history_entry("C:\\path\\fgha\\abc-old", 100, 1),
+                history_entry("C:\\path\\abcde\\fgha", 200, 1),
+                history_entry("D:\\path\\fgha\\abcde", 300, 1),
             ],
             ..AppState::default()
         };
 
-        let candidates = history_list_candidates(&state, "WORK");
+        let candidates = history_list_candidates(&state, "ABC");
 
         assert_eq!(
             candidates,
-            vec!["C:\\work\\project", "C:\\work\\archive"]
+            vec!["D:\\path\\fgha\\abcde", "C:\\path\\fgha\\abc-old"]
         );
+        assert!(!candidates.contains(&"C:\\path\\abcde\\fgha".to_string()));
     }
 
     #[test]
