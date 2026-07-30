@@ -11,6 +11,8 @@ _j() {
 
     options=(
         '-i:Interactive selection with fzf'
+        '-d:Browse directories with arrow keys'
+        '--directory:Browse directories with arrow keys'
         'init:Generate shell integration'
         '-c:Record current directory to history'
         '-x:Remove current directory from history'

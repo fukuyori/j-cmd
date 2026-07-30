@@ -172,7 +172,7 @@ _j_generated_complete() {
         return
     fi
     if (( CURRENT == 2 )) && [[ "${words[CURRENT]}" == -* ]]; then
-        _values 'option' -i -l -c -x -xa --ranking --fzf-opts --fzf-opts-clear
+        _values 'option' -i -d --directory -l -c -x -xa --ranking --fzf-opts --fzf-opts-clear
         return
     fi
     local keyword="${words[2,-1]}"
@@ -249,7 +249,7 @@ _j_generated_complete() {
         return
     fi
     if [[ "$current" == -* ]]; then
-        COMPREPLY=($(compgen -W "-i --interactive -l --list -c -x -xa -a -ar -al -h --help -V --version --ranking --fzf-opts --fzf-opts-clear --exclude-add --exclude-remove --exclude-list" -- "$current"))
+        COMPREPLY=($(compgen -W "-i --interactive -d --directory -l --list -c -x -xa -a -ar -al -h --help -V --version --ranking --fzf-opts --fzf-opts-clear --exclude-add --exclude-remove --exclude-list" -- "$current"))
         return
     fi
     local keyword="${COMP_WORDS[*]:1}"
@@ -328,7 +328,7 @@ Register-ArgumentCompleter -CommandName __J_COMPLETION_TARGETS__ -ScriptBlock {
         $values = @("recent", "frecency", "frequency")
     } elseif ($wordToComplete.StartsWith("-")) {
         $values = @(
-            "-i", "--interactive", "-l", "--list", "-c", "-x", "-xa",
+            "-i", "--interactive", "-d", "--directory", "-l", "--list", "-c", "-x", "-xa",
             "-a", "-ar", "-al", "-h", "--help", "-V", "--version",
             "--ranking", "--fzf-opts", "--fzf-opts-clear",
             "--exclude-add", "--exclude-remove", "--exclude-list"
@@ -360,6 +360,7 @@ mod tests {
         assert!(script.contains("j() { __j_dispatch"));
         assert!(!script.contains("cd() {"));
         assert!(script.contains("init|-c|-x"));
+        assert!(script.contains("-d --directory"));
         assert!(script.contains("compdef _j_generated_complete j"));
     }
 
@@ -377,6 +378,7 @@ mod tests {
         assert!(script.contains("function global:j"));
         assert!(script.contains("function global:Invoke-JCmd"));
         assert!(script.contains("__j_cmd_prompt_hooked"));
+        assert!(script.contains("\"-d\", \"--directory\""));
         assert!(script.contains("Register-ArgumentCompleter -CommandName j,ji"));
     }
 

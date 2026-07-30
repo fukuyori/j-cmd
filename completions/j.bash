@@ -8,7 +8,7 @@ _j_completions() {
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
     
     # Options
-    local options="init -i -c -x -xa -l --list -a -ar -al -h --help -V --version --exclude-add --exclude-remove --exclude-list --ranking --fzf-opts --fzf-opts-clear --complete"
+    local options="init -i -d --directory -c -x -xa -l --list -a -ar -al -h --help -V --version --exclude-add --exclude-remove --exclude-list --ranking --fzf-opts --fzf-opts-clear --complete"
     
     # If current word starts with -, complete options
     if [[ "$cur" == -* ]]; then

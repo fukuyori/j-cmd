@@ -49,6 +49,12 @@ struct HistoryEntry {
     visit_count: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DirectoryCandidate {
+    name: String,
+    path: PathBuf,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct AppState {
     history: Vec<HistoryEntry>,
@@ -334,6 +340,109 @@ fn run_fzf(candidates: &[String], query: &str, config: &Config) -> Option<String
     None
 }
 
+fn direct_directory_candidates(base: &Path) -> io::Result<Vec<DirectoryCandidate>> {
+    let mut candidates = Vec::new();
+
+    for entry in fs::read_dir(base)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            candidates.push(DirectoryCandidate {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path,
+            });
+        }
+    }
+
+    candidates.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(candidates)
+}
+
+#[derive(Debug)]
+struct DirectoryBrowser {
+    current: PathBuf,
+    candidates: Vec<DirectoryCandidate>,
+    selected: usize,
+}
+
+impl DirectoryBrowser {
+    fn new(start: &Path) -> io::Result<Self> {
+        Ok(Self {
+            current: start.to_path_buf(),
+            candidates: direct_directory_candidates(start)?,
+            selected: 0,
+        })
+    }
+
+    fn select_previous(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+
+    fn select_next(&mut self) {
+        if self.selected + 1 < self.candidates.len() {
+            self.selected += 1;
+        }
+    }
+
+    fn selected_path(&self) -> Option<PathBuf> {
+        self.candidates
+            .get(self.selected)
+            .map(|candidate| candidate.path.clone())
+    }
+
+    fn current_path(&self) -> PathBuf {
+        self.current.clone()
+    }
+
+    fn select_prefix(&mut self, prefix: &str) -> bool {
+        let prefix = prefix.to_lowercase();
+        if let Some(index) = self
+            .candidates
+            .iter()
+            .position(|candidate| candidate.name.to_lowercase().starts_with(&prefix))
+        {
+            self.selected = index;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn move_into_selected(&mut self) -> io::Result<bool> {
+        let Some(next) = self.selected_path() else {
+            return Ok(false);
+        };
+        let candidates = direct_directory_candidates(&next)?;
+        self.current = next;
+        self.candidates = candidates;
+        self.selected = 0;
+        Ok(true)
+    }
+
+    fn move_to_parent(&mut self) -> io::Result<bool> {
+        let Some(parent) = self.current.parent().map(Path::to_path_buf) else {
+            return Ok(false);
+        };
+        let previous = self.current.clone();
+        let candidates = direct_directory_candidates(&parent)?;
+        self.current = parent;
+        self.candidates = candidates;
+        self.selected = self
+            .candidates
+            .iter()
+            .position(|candidate| candidate.path == previous)
+            .unwrap_or(0);
+        Ok(true)
+    }
+}
+
 #[cfg(windows)]
 fn open_terminal_output() -> io::Result<File> {
     OpenOptions::new().write(true).open("CONOUT$")
@@ -344,11 +453,11 @@ fn open_terminal_output() -> io::Result<File> {
     OpenOptions::new().read(true).write(true).open("/dev/tty")
 }
 
-struct HistorySelectorTerminal {
+struct SelectorTerminal {
     output: File,
 }
 
-impl HistorySelectorTerminal {
+impl SelectorTerminal {
     fn enter() -> io::Result<Self> {
         let mut output = open_terminal_output()?;
         terminal::enable_raw_mode()?;
@@ -364,7 +473,7 @@ impl HistorySelectorTerminal {
     }
 }
 
-impl Drop for HistorySelectorTerminal {
+impl Drop for SelectorTerminal {
     fn drop(&mut self) {
         execute!(self.output, cursor::Show, LeaveAlternateScreen).ok();
         terminal::disable_raw_mode().ok();
@@ -473,11 +582,138 @@ fn render_history_selector(
     output.flush()
 }
 
+fn render_directory_browser(
+    output: &mut impl Write,
+    browser: &DirectoryBrowser,
+    prefix: &str,
+    status: &str,
+) -> io::Result<()> {
+    let (width, height) = terminal::size().unwrap_or((80, 24));
+    let list_height = usize::from(height.saturating_sub(1).max(1));
+    let offset = browser
+        .selected
+        .saturating_add(1)
+        .saturating_sub(list_height);
+
+    queue!(
+        output,
+        cursor::MoveTo(0, 0),
+        Clear(ClearType::All),
+        Print(truncate_terminal_line(
+            &if prefix.is_empty() {
+                status.to_string()
+            } else if status.is_empty() {
+                format!("prefix: {}", prefix)
+            } else {
+                format!("prefix: {}  {}", prefix, status)
+            },
+            usize::from(width)
+        )),
+        Print("\r\n")
+    )?;
+
+    if browser.candidates.is_empty() {
+        queue!(output, Print("No subdirectories."))?;
+    } else {
+        for (index, candidate) in browser
+            .candidates
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(list_height)
+        {
+            let line = truncate_terminal_line(
+                &format!(
+                    "{}{}",
+                    if index == browser.selected { "> " } else { "  " },
+                    candidate.name
+                ),
+                usize::from(width),
+            );
+            if index == browser.selected {
+                queue!(
+                    output,
+                    SetAttribute(Attribute::Reverse),
+                    Print(line),
+                    SetAttribute(Attribute::Reset)
+                )?;
+            } else {
+                queue!(output, Print(line))?;
+            }
+            queue!(output, Print("\r\n"))?;
+        }
+    }
+
+    output.flush()
+}
+
+fn browse_directories(start: &Path) -> io::Result<Option<PathBuf>> {
+    let mut browser = DirectoryBrowser::new(start)?;
+    let mut prefix = String::new();
+    let mut status = String::new();
+    let mut terminal = SelectorTerminal::enter()?;
+
+    loop {
+        render_directory_browser(terminal.output(), &browser, &prefix, &status)?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            status.clear();
+
+            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                return Ok(None);
+            }
+
+            match key.code {
+                KeyCode::Up => {
+                    prefix.clear();
+                    browser.select_previous();
+                }
+                KeyCode::Down => {
+                    prefix.clear();
+                    browser.select_next();
+                }
+                KeyCode::Right => match browser.move_into_selected() {
+                    Ok(true) => prefix.clear(),
+                    Ok(false) => status = "No subdirectory selected.".to_string(),
+                    Err(error) => status = format!("Cannot open directory: {}", error),
+                },
+                KeyCode::Left => match browser.move_to_parent() {
+                    Ok(true) => prefix.clear(),
+                    Ok(false) => status = "Already at the filesystem root.".to_string(),
+                    Err(error) => status = format!("Cannot open parent directory: {}", error),
+                },
+                KeyCode::Enter => {
+                    return Ok(Some(browser.current_path()));
+                }
+                KeyCode::Backspace => {
+                    prefix.pop();
+                    if !prefix.is_empty() {
+                        browser.select_prefix(&prefix);
+                    }
+                }
+                KeyCode::Char(character)
+                    if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    prefix.push(character);
+                    if !browser.select_prefix(&prefix) {
+                        status = "No directory starts with this prefix.".to_string();
+                    }
+                }
+                KeyCode::Esc => return Ok(None),
+                _ => {}
+            }
+        }
+    }
+}
+
 fn select_history(state: &mut AppState, keyword: &str) -> io::Result<Option<String>> {
     let mut candidates = history_list_candidates(state, keyword);
     let mut selected = 0;
     let mut status = String::new();
-    let mut terminal = HistorySelectorTerminal::enter()?;
+    let mut terminal = SelectorTerminal::enter()?;
 
     loop {
         render_history_selector(terminal.output(), &candidates, selected, keyword, &status)?;
@@ -962,6 +1198,27 @@ fn main() {
             }
             return;
         }
+        // Browse directories with the built-in selector
+        "-d" | "--directory" => {
+            let Some(ref current) = current_dir else {
+                eprintln!("Cannot get current directory");
+                return;
+            };
+            match browse_directories(Path::new(current)) {
+                Ok(Some(selected)) => {
+                    let selected_path = selected.to_string_lossy().into_owned();
+                    state = load_state();
+                    record_jump(&mut state, current_dir.as_deref(), &selected_path);
+                    if let Err(error) = save_state(&state) {
+                        eprintln!("Failed to update history: {}", error);
+                    }
+                    output_path(&selected);
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("Cannot open directory browser: {}", error),
+            }
+            return;
+        }
         // Tab completion - output all matching paths
         "--complete" => {
             let keyword = if args.len() > 2 {
@@ -1207,6 +1464,7 @@ fn main() {
             eprintln!("  j <keyword>        Jump to directory matching keyword");
             eprintln!("  j <kw1> <kw2> ...  Jump using multiple keywords (in order)");
             eprintln!("  j -i [keyword]     Interactive selection with fzf");
+            eprintln!("  j -d               Browse directories with arrow keys");
             eprintln!("  j init <shell>     Generate shell integration");
             eprintln!("  j !<alias>         Jump to aliased directory");
             eprintln!("  j ~<path>          Jump to path under home directory");
@@ -1240,6 +1498,7 @@ fn main() {
             eprintln!("  j proj src         Jump with keywords in order");
             eprintln!("  j -i               Interactive fzf selection");
             eprintln!("  j -i proj          Filtered interactive selection");
+            eprintln!("  j -d               Browse directories with arrow keys");
             #[cfg(windows)]
             eprintln!("  j d:src            Search in D: drive");
             eprintln!("  j --exclude-add node_modules");
@@ -1461,6 +1720,128 @@ mod tests {
             vec!["--height", "60%", "--prompt", "jump> ", "--border"]
         );
         assert!(split_option_string(r#"--prompt "jump> "#).is_err());
+    }
+
+    #[test]
+    fn direct_directory_candidates_only_include_immediate_directories() {
+        let test_root = env::temp_dir().join(format!(
+            "j-cmd-directories-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        fs::create_dir_all(test_root.join("beta").join("nested")).unwrap();
+        fs::create_dir_all(test_root.join("Alpha")).unwrap();
+        fs::write(test_root.join("file.txt"), "not a directory").unwrap();
+
+        let candidates = direct_directory_candidates(&test_root).unwrap();
+        let names: Vec<&str> = candidates
+            .iter()
+            .map(|candidate| candidate.name.as_str())
+            .collect();
+
+        assert_eq!(names, vec!["Alpha", "beta"]);
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.path.parent() == Some(test_root.as_path())));
+        fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn directory_browser_moves_right_and_left_between_directories() {
+        let test_root = env::temp_dir().join(format!(
+            "j-cmd-browser-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let alpha = test_root.join("Alpha");
+        let beta = test_root.join("beta");
+        let nested = beta.join("nested");
+        fs::create_dir_all(&alpha).unwrap();
+        fs::create_dir_all(&nested).unwrap();
+
+        let mut browser = DirectoryBrowser::new(&test_root).unwrap();
+        assert_eq!(browser.selected_path().as_deref(), Some(alpha.as_path()));
+
+        browser.select_next();
+        assert_eq!(browser.selected_path().as_deref(), Some(beta.as_path()));
+        assert!(browser.move_into_selected().unwrap());
+        assert_eq!(browser.current, beta);
+        assert_eq!(browser.selected_path().as_deref(), Some(nested.as_path()));
+
+        assert!(browser.move_to_parent().unwrap());
+        assert_eq!(browser.current, test_root);
+        assert_eq!(browser.selected_path().as_deref(), Some(beta.as_path()));
+
+        fs::remove_dir_all(&browser.current).unwrap();
+    }
+
+    #[test]
+    fn directory_browser_selects_case_insensitive_name_prefixes() {
+        let test_root = env::temp_dir().join(format!(
+            "j-cmd-prefix-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let alpha = test_root.join("Alpha");
+        let beta = test_root.join("beta");
+        fs::create_dir_all(&alpha).unwrap();
+        fs::create_dir_all(&beta).unwrap();
+
+        let mut browser = DirectoryBrowser::new(&test_root).unwrap();
+        assert!(browser.select_prefix("BE"));
+        assert_eq!(browser.selected_path().as_deref(), Some(beta.as_path()));
+        assert!(browser.select_prefix("a"));
+        assert_eq!(browser.selected_path().as_deref(), Some(alpha.as_path()));
+        assert!(!browser.select_prefix("missing"));
+        assert_eq!(browser.selected_path().as_deref(), Some(alpha.as_path()));
+
+        fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn directory_browser_selection_does_not_wrap_at_list_boundaries() {
+        let test_root = env::temp_dir().join(format!(
+            "j-cmd-boundaries-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let alpha = test_root.join("Alpha");
+        let beta = test_root.join("beta");
+        fs::create_dir_all(&alpha).unwrap();
+        fs::create_dir_all(&beta).unwrap();
+
+        let mut browser = DirectoryBrowser::new(&test_root).unwrap();
+        browser.select_previous();
+        assert_eq!(browser.selected_path().as_deref(), Some(alpha.as_path()));
+
+        browser.select_next();
+        browser.select_next();
+        assert_eq!(browser.selected_path().as_deref(), Some(beta.as_path()));
+
+        fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn directory_browser_confirms_the_current_directory() {
+        let test_root = env::temp_dir().join(format!(
+            "j-cmd-current-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let child = test_root.join("child");
+        let nested = child.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+
+        let mut browser = DirectoryBrowser::new(&test_root).unwrap();
+        assert_eq!(browser.current_path(), test_root);
+        assert_eq!(browser.selected_path().as_deref(), Some(child.as_path()));
+
+        assert!(browser.move_into_selected().unwrap());
+        assert_eq!(browser.current_path(), child);
+        assert_eq!(browser.selected_path().as_deref(), Some(nested.as_path()));
+
+        fs::remove_dir_all(browser.current_path()).unwrap();
+        fs::remove_dir_all(test_root).unwrap();
     }
 
     #[test]

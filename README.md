@@ -1,7 +1,7 @@
 # j - Fast Directory Jump
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/your-username/j-cmd)
+[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/your-username/j-cmd)
 
 A fast directory jump command for Windows, Linux, and macOS.
 
@@ -13,6 +13,7 @@ A fast directory jump command for Windows, Linux, and macOS.
 
 - 🚀 Jump to directories by keyword
 - 🔍 **Interactive selection with fzf**
+- 📂 Browse directories with the built-in `j -d` selector
 - 📝 Automatic history recording (up to 1000 entries)
 - ↩️ Undo/Redo support
 - 🏷️ Alias support
@@ -135,7 +136,7 @@ cd() {
             $J_CMD "$@"
             return
             ;;
-        -l|--list)
+        -d|--directory|-l|--list)
             result=$($J_CMD "$@")
             [[ -d "$result" ]] && builtin cd "$result" || echo "$result"
             return
@@ -319,7 +320,7 @@ complete -p j
 
 #### Using fzf
 
-`j -i` only requires the `fzf` executable to be available on PATH. fzf's shell key bindings and completion scripts are optional. If fzf shell integration breaks normal Tab completion, omit that integration and continue using `j -i`, or re-register the j-cmd completion after initializing fzf. The `j -l` history selector does not use fzf.
+`j -i` only requires the `fzf` executable to be available on PATH. fzf's shell key bindings and completion scripts are optional. If fzf shell integration breaks normal Tab completion, omit that integration and continue using `j -i`, or re-register the j-cmd completion after initializing fzf. The built-in `j -d` directory browser and `j -l` history selector do not use fzf.
 
 #### PowerShell
 
@@ -360,6 +361,16 @@ j work api src      # Jump to path containing work → api → src in order
 j d:                # Jump to D: drive root
 j d:proj            # Search "proj" in D: drive
 ```
+
+### Directory Browser
+
+Use `j -d` (or `j --directory`) to open the built-in directory browser. Each screen lists only the directories immediately below the displayed path. It does not use fzf or history to generate candidates.
+
+```bash
+j -d
+```
+
+Use `↑` / `↓` to select an entry, `→` to open the selected directory, and `←` to return to its parent. Typing characters searches directory names by a case-insensitive prefix and moves the highlight; `Backspace` removes the last search character. `Enter` confirms the directory currently open in the browser as the jump destination, while `Esc` or `Ctrl+C` cancels. The confirmed absolute path is passed back to the shell integration and recorded in history.
 
 ### History Operations
 
@@ -445,6 +456,9 @@ j +              # Go forward to /work/project/src again
 # Select from history
 j -l             # Select from the 20 most recent entries
 j -l project     # Select from 20 recent entries containing "project"
+
+# Select an immediate subdirectory
+j -d
 ```
 
 ## Matching Rules
