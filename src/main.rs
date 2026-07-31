@@ -426,6 +426,11 @@ impl DirectoryBrowser {
         Ok(true)
     }
 
+    fn selected_or_current_path(&self) -> PathBuf {
+        self.selected_path()
+            .unwrap_or_else(|| self.current_path())
+    }
+
     fn move_to_parent(&mut self) -> io::Result<bool> {
         let Some(parent) = self.current.parent().map(Path::to_path_buf) else {
             return Ok(false);
@@ -686,13 +691,16 @@ fn browse_directories(start: &Path) -> io::Result<Option<PathBuf>> {
                     Err(error) => status = format!("Cannot open parent directory: {}", error),
                 },
                 KeyCode::Enter => {
-                    return Ok(Some(browser.current_path()));
+                    return Ok(Some(browser.selected_or_current_path()));
                 }
                 KeyCode::Backspace => {
                     prefix.pop();
                     if !prefix.is_empty() {
                         browser.select_prefix(&prefix);
                     }
+                }
+                KeyCode::Char('.') => {
+                    return Ok(Some(browser.current_path()));
                 }
                 KeyCode::Char(character)
                     if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
@@ -1822,7 +1830,7 @@ mod tests {
     }
 
     #[test]
-    fn directory_browser_confirms_the_current_directory() {
+    fn directory_browser_confirms_the_selected_directory_or_current_leaf() {
         let test_root = env::temp_dir().join(format!(
             "j-cmd-current-{}-{}",
             std::process::id(),
@@ -1836,11 +1844,37 @@ mod tests {
         assert_eq!(browser.current_path(), test_root);
         assert_eq!(browser.selected_path().as_deref(), Some(child.as_path()));
 
+        assert_eq!(browser.selected_or_current_path(), child);
+        assert_eq!(browser.current_path(), test_root);
+
         assert!(browser.move_into_selected().unwrap());
         assert_eq!(browser.current_path(), child);
         assert_eq!(browser.selected_path().as_deref(), Some(nested.as_path()));
+        assert_eq!(browser.selected_or_current_path(), nested);
+
+        assert!(browser.move_into_selected().unwrap());
+        assert_eq!(browser.current_path(), nested);
+        assert_eq!(browser.selected_path(), None);
+        assert_eq!(browser.selected_or_current_path(), nested);
 
         fs::remove_dir_all(browser.current_path()).unwrap();
+        fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn directory_browser_can_confirm_current_while_a_child_is_selected() {
+        let test_root = env::temp_dir().join(format!(
+            "j-cmd-confirm-current-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let child = test_root.join("child");
+        fs::create_dir_all(&child).unwrap();
+
+        let browser = DirectoryBrowser::new(&test_root).unwrap();
+        assert_eq!(browser.selected_path().as_deref(), Some(child.as_path()));
+        assert_eq!(browser.current_path(), test_root);
+
         fs::remove_dir_all(test_root).unwrap();
     }
 

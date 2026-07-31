@@ -1,7 +1,7 @@
 # j - Fast Directory Jump
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/your-username/j-cmd)
+[![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)](https://github.com/your-username/j-cmd)
 
 A fast directory jump command for Windows, Linux, and macOS.
 
@@ -370,7 +370,7 @@ Use `j -d` (or `j --directory`) to open the built-in directory browser. Each scr
 j -d
 ```
 
-Use `↑` / `↓` to select an entry, `→` to open the selected directory, and `←` to return to its parent. Typing characters searches directory names by a case-insensitive prefix and moves the highlight; `Backspace` removes the last search character. `Enter` confirms the directory currently open in the browser as the jump destination, while `Esc` or `Ctrl+C` cancels. The confirmed absolute path is passed back to the shell integration and recorded in history.
+Use `↑` / `↓` to select an entry, `→` to open the selected directory in the browser, and `←` to return to its parent. Typing characters searches directory names by a case-insensitive prefix and moves the highlight; `Backspace` removes the last search character. `Enter` confirms the highlighted directory as the jump destination without opening it in the browser; if the current directory has no child directories, it confirms the current directory. Press `.` to confirm the current directory immediately even when a child is highlighted. `Esc` or `Ctrl+C` cancels. The confirmed absolute path is passed back to the shell integration and recorded in history.
 
 ### History Operations
 

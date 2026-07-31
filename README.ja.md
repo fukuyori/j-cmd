@@ -1,7 +1,7 @@
 # j - 高速ディレクトリジャンプ
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/your-username/j-cmd)
+[![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)](https://github.com/your-username/j-cmd)
 
 Windows、Linux、macOS 対応の高速ディレクトリジャンプコマンド
 
@@ -370,7 +370,7 @@ j d:proj            # D: ドライブ内の "proj" を検索
 j -d
 ```
 
-`↑` / `↓`で項目を選択し、`→`で選択中のフォルダへ入り、`←`で親フォルダへ戻ります。文字を入力すると、フォルダ名の先頭を大文字小文字を区別せずに検索してハイライトを移動し、`Backspace`で検索文字を1文字戻します。`Enter`でブラウザの現在のフォルダを移動先として確定し、`Esc`または`Ctrl+C`でキャンセルします。確定した絶対パスはシェル統合へ返して履歴にも記録します。
+`↑` / `↓`で項目を選択し、`→`で選択中のフォルダをブラウザ内に開き、`←`で親フォルダへ戻ります。文字を入力すると、フォルダ名の先頭を大文字小文字を区別せずに検索してハイライトを移動し、`Backspace`で検索文字を1文字戻します。`Enter`は選択先をブラウザ内に開かず、ハイライト中のフォルダを移動先として確定します。現在のフォルダにサブフォルダがない場合は、現在位置を確定します。サブフォルダをハイライトしていても、`.`を押すと現在位置を直ちに確定できます。`Esc`または`Ctrl+C`でキャンセルします。確定した絶対パスはシェル統合へ返して履歴にも記録します。
 
 ### 履歴操作
 

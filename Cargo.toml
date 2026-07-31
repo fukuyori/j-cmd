@@ -1,6 +1,6 @@
 [package]
 name = "j"
-version = "2.2.0"
+version = "2.2.1"
 edition = "2021"
 description = "Fast directory jumper for Windows, Linux, and macOS"
 license = "MIT"
