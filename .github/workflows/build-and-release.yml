@@ -1,0 +1,140 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-latest
+            platform: linux-x64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust 1.82
+        shell: bash
+        run: rustup toolchain install 1.82.0 --profile minimal
+
+      - name: Test
+        shell: bash
+        run: cargo +1.82.0 test --locked
+
+      - name: Build release binary
+        shell: bash
+        run: cargo +1.82.0 build --release --locked
+
+      - name: Package Unix release
+        if: startsWith(github.ref, 'refs/tags/') && runner.os != 'Windows'
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          package="j-cmd-${TAG_NAME}-${PLATFORM}"
+          mkdir -p "dist/${package}/completions"
+          cp target/release/j "dist/${package}/"
+          cp README.md README.ja.md CHANGELOG.md "dist/${package}/"
+          cp j-init.sh j-init.zsh j-init.ps1 j-init.cmd "dist/${package}/"
+          cp completions/_j completions/j.bash "dist/${package}/completions/"
+          tar -czf "dist/${package}.tar.gz" -C dist "${package}"
+
+      - name: Package Windows release
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          $package = "j-cmd-$env:TAG_NAME-$env:PLATFORM"
+          $packageDir = Join-Path dist $package
+          New-Item -ItemType Directory -Path (Join-Path $packageDir "completions") -Force | Out-Null
+          Copy-Item target\release\j.exe $packageDir
+          Copy-Item README.md, README.ja.md, CHANGELOG.md $packageDir
+          Copy-Item j-init.sh, j-init.zsh, j-init.ps1, j-init.cmd $packageDir
+          Copy-Item completions\_j, completions\j.bash (Join-Path $packageDir "completions")
+          Compress-Archive -Path $packageDir -DestinationPath "dist\$package.zip"
+
+      - name: Upload release archive
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download release archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify tag version
+        id: version
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          package_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          tag_version=${TAG_NAME#v}
+          if [[ -z "${package_version}" || "${tag_version}" != "${package_version}" ]]; then
+            echo "Tag ${TAG_NAME} does not match Cargo.toml version ${package_version}." >&2
+            exit 1
+          fi
+          echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum *.zip *.tar.gz > SHA256SUMS
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "${TAG_NAME}" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "j-cmd ${PACKAGE_VERSION}"

@@ -1,10 +1,11 @@
 [package]
 name = "j"
-version = "2.2.1"
+version = "2.3.0"
 edition = "2021"
+rust-version = "1.82"
 description = "Fast directory jumper for Windows, Linux, and macOS"
 license = "MIT"
-repository = "https://github.com/your-username/j-cmd"
+repository = "https://github.com/fukuyori/j-cmd"
 keywords = ["cli", "directory", "jump", "navigation", "autojump"]
 categories = ["command-line-utilities"]
 

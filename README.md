@@ -1,7 +1,7 @@
 # j - Fast Directory Jump
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)](https://github.com/your-username/j-cmd)
+[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/fukuyori/j-cmd)
 
 A fast directory jump command for Windows, Linux, and macOS.
 
@@ -24,6 +24,8 @@ A fast directory jump command for Windows, Linux, and macOS.
 
 ## Installation
 
+Rust 1.82 or later is required when building from source.
+
 ### Ubuntu / Debian
 
 ```bash
@@ -36,7 +38,7 @@ sudo apt update
 sudo apt install -y build-essential
 
 # 3. Clone and build
-git clone https://github.com/your-username/j-cmd.git
+git clone https://github.com/fukuyori/j-cmd.git
 cd j-cmd
 cargo build --release
 
@@ -52,7 +54,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 
 # 2. Clone and build
-git clone https://github.com/your-username/j-cmd.git
+git clone https://github.com/fukuyori/j-cmd.git
 cd j-cmd
 cargo build --release
 
@@ -65,11 +67,24 @@ sudo cp target/release/j /usr/local/bin/
 1. Install [Rust](https://rustup.rs/)
 2. Clone and build:
    ```powershell
-   git clone https://github.com/your-username/j-cmd.git
+   git clone https://github.com/fukuyori/j-cmd.git
    cd j-cmd
    cargo build --release
    ```
 3. Copy `target\release\j.exe` to a directory in your PATH
+
+## Continuous Integration and Releases
+
+GitHub Actions runs `cargo test --locked` and `cargo build --release --locked` with Rust 1.82 on Windows, macOS, and Linux for pull requests and pushes to `main`.
+
+Pushing a tag creates a GitHub Release after all three builds succeed. The tag must match the version in `Cargo.toml`; both `2.3.0` and `v2.3.0` formats are accepted. The release contains separate archives for Windows, macOS, and Linux, plus a `SHA256SUMS` file.
+
+```bash
+git tag 2.3.0
+git push origin 2.3.0
+```
+
+Creating and pushing the tag is a manual release operation; the workflow does not create tags automatically.
 
 ## Shell Configuration
 
@@ -387,7 +402,7 @@ Use `↑` / `↓` to select an entry, `→` to open the selected directory in th
 
 In the history selector, use `↑` / `↓` to move, `Enter` to jump, and `x` to delete the selected entry and refresh the list. Press `Esc` or `q` to cancel.
 
-Missing history entries are not removed immediately. To protect temporarily disconnected network or external drives, j-cmd only prunes entries that are still missing more than 90 days after their last use.
+Missing history entries are not removed immediately. To protect temporarily disconnected network or external drives, j-cmd only prunes entries that are still missing more than 90 days after their last use. This maintenance runs when the state is next saved and no more than once every 24 hours, so ordinary startup and read-only commands do not check every history path.
 
 ### Aliases
 
@@ -475,16 +490,25 @@ Examples:
 - `j rust` matches `/work/rust` but not `/work/rust/src`
 - `j work rust` matches `/home/work/project/rust` but not `/home/rust/project/work`
 
+## Performance
+
+- `j --version`, `j --help`, and `j init` return without loading history or configuration files.
+- The default `recent` ranking reuses the history order stored in `state.json` instead of sorting it again for every search.
+- History-path existence checks run only during state saves, at most once every 24 hours. Entries used within the last 90 days do not require an existence check.
+- Configuration directories are created only when data is saved. Reading a missing state, alias, or configuration file falls back to its default without a separate existence check.
+
 ## Configuration Files
 
 Configuration is stored in `~/.config/j/`:
 
 ```
 ~/.config/j/
-├── state.json      # History and undo/redo stack
+├── state.json      # History, undo/redo stack, and maintenance timestamp
 ├── aliases.json    # Aliases
 └── config.json     # Exclude patterns and settings
 ```
+
+Existing `state.json` files remain compatible. If the maintenance timestamp is absent, it is initialized the next time the state is saved.
 
 ### Ranking
 

@@ -1,7 +1,7 @@
 # j - 高速ディレクトリジャンプ
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)](https://github.com/your-username/j-cmd)
+[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/fukuyori/j-cmd)
 
 Windows、Linux、macOS 対応の高速ディレクトリジャンプコマンド
 
@@ -24,6 +24,8 @@ Windows、Linux、macOS 対応の高速ディレクトリジャンプコマン�
 
 ## インストール
 
+ソースからビルドする場合はRust 1.82以降が必要です。
+
 ### Ubuntu / Debian
 
 ```bash
@@ -36,7 +38,7 @@ sudo apt update
 sudo apt install -y build-essential
 
 # 3. ソースの取得とビルド
-git clone https://github.com/your-username/j-cmd.git
+git clone https://github.com/fukuyori/j-cmd.git
 cd j-cmd
 cargo build --release
 
@@ -52,7 +54,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 
 # 2. ソースの取得とビルド
-git clone https://github.com/your-username/j-cmd.git
+git clone https://github.com/fukuyori/j-cmd.git
 cd j-cmd
 cargo build --release
 
@@ -65,11 +67,24 @@ sudo cp target/release/j /usr/local/bin/
 1. [Rust](https://rustup.rs/) をインストール
 2. ソースの取得とビルド：
    ```powershell
-   git clone https://github.com/your-username/j-cmd.git
+   git clone https://github.com/fukuyori/j-cmd.git
    cd j-cmd
    cargo build --release
    ```
 3. `target\release\j.exe` を PATH の通ったフォルダにコピー
+
+## 継続的インテグレーションとリリース
+
+GitHub Actionsは、`main`へのプッシュとPull Requestで、Windows、macOS、Linuxのそれぞれについて、Rust 1.82を使用した`cargo test --locked`と`cargo build --release --locked`を実行します。
+
+タグをプッシュすると、3環境のビルドがすべて成功した後にGitHub Releaseを作成します。タグは`Cargo.toml`のバージョンと一致する必要があり、`2.3.0`と`v2.3.0`の両方の形式を使用できます。ReleaseにはWindows、macOS、Linux用のアーカイブと`SHA256SUMS`を添付します。
+
+```bash
+git tag 2.3.0
+git push origin 2.3.0
+```
+
+タグの作成とプッシュは手動のリリース操作です。ワークフローが自動的にタグを作成することはありません。
 
 ## シェル設定
 
@@ -387,7 +402,7 @@ j -d
 
 履歴選択画面では、`↑` / `↓` で選択、`Enter` で移動、`x` で選択中の履歴を削除して一覧を再表示します。`Esc` または `q` でキャンセルできます。
 
-存在しない履歴はすぐには削除しません。ネットワークドライブや外付けドライブの一時的な切断を考慮し、最後の使用から90日を超えても存在しない履歴だけを起動時に自動整理します。
+存在しない履歴はすぐには削除しません。ネットワークドライブや外付けドライブの一時的な切断を考慮し、最後の使用から90日を超えても存在しない履歴だけを自動整理します。整理は次に状態を保存するとき、かつ24時間に1回だけ実行するため、通常起動や読み取り専用コマンドでは履歴の全パスを確認しません。
 
 ### エイリアス
 
@@ -475,16 +490,25 @@ j -d
 - `j rust` は `/work/rust` にマッチするが `/work/rust/src` にはマッチしない
 - `j work rust` は `/home/work/project/rust` にマッチするが `/home/rust/project/work` にはマッチしない
 
+## 反応速度
+
+- `j --version`、`j --help`、`j init`は、履歴ファイルと設定ファイルを読み込まずに結果を返します。
+- 既定の`recent`ランキングでは、`state.json`に保存された履歴順を利用し、検索ごとの再ソートを省略します。
+- 履歴パスの存在確認は状態保存時に限り、最大でも24時間に1回だけ実行します。最後の使用から90日以内の履歴は存在確認を行いません。
+- 設定ディレクトリはデータ保存時だけ作成します。状態、エイリアス、設定ファイルがない場合は、事前の存在確認を行わず既定値を使用します。
+
 ## 設定ファイル
 
 設定は `~/.config/j/` に保存されます：
 
 ```
 ~/.config/j/
-├── state.json      # 履歴、undo/redo スタック
+├── state.json      # 履歴、undo/redo スタック、整理日時
 ├── aliases.json    # エイリアス
 └── config.json     # 除外パターン等の設定
 ```
+
+既存の`state.json`との互換性は維持されます。整理日時がない場合は、次に状態を保存するときに初期化します。
 
 ### ランキング
 
