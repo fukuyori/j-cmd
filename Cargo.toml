@@ -2,7 +2,7 @@
 name = "j"
 version = "2.3.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.85"
 description = "Fast directory jumper for Windows, Linux, and macOS"
 license = "MIT"
 repository = "https://github.com/fukuyori/j-cmd"

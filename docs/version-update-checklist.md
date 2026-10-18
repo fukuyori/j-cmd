@@ -23,3 +23,11 @@
 3. タグのプッシュ後、GitHub Releaseに3環境のアーカイブと`SHA256SUMS`が添付されている
 
 リリースビルド、パッケージ、インストーラー、タグ、コミット、プッシュは、依頼で明示された場合だけ実行する。
+
+## 最低対応Rustバージョン
+
+最低対応Rustバージョンを変更するときは、次を同期する。
+
+- `Cargo.toml`の`rust-version`
+- `README.md`と`README.ja.md`の必要Rustバージョン
+- GitHub Actionsが特定の古いRustへ固定されていないこと

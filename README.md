@@ -24,7 +24,7 @@ A fast directory jump command for Windows, Linux, and macOS.
 
 ## Installation
 
-Rust 1.82 or later is required when building from source.
+Rust 1.85 or later is required when building from source.
 
 ### Ubuntu / Debian
 
@@ -75,7 +75,7 @@ sudo cp target/release/j /usr/local/bin/
 
 ## Continuous Integration and Releases
 
-GitHub Actions runs `cargo test --locked` and `cargo build --release --locked` with Rust 1.82 on Windows, macOS, and Linux for pull requests and pushes to `main`.
+GitHub Actions runs `cargo +stable test --locked` and `cargo +stable build --release --locked` with the current stable Rust toolchain on Windows, macOS, and Linux for pull requests and pushes to `main`.
 
 Pushing a tag creates a GitHub Release after all three builds succeed. The tag must match the version in `Cargo.toml`; both `2.3.0` and `v2.3.0` formats are accepted. The release contains separate archives for Windows, macOS, and Linux, plus a `SHA256SUMS` file.
 

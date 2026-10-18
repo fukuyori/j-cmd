@@ -24,7 +24,7 @@ Windows、Linux、macOS 対応の高速ディレクトリジャンプコマン�
 
 ## インストール
 
-ソースからビルドする場合はRust 1.82以降が必要です。
+ソースからビルドする場合はRust 1.85以降が必要です。
 
 ### Ubuntu / Debian
 
@@ -75,7 +75,7 @@ sudo cp target/release/j /usr/local/bin/
 
 ## 継続的インテグレーションとリリース
 
-GitHub Actionsは、`main`へのプッシュとPull Requestで、Windows、macOS、Linuxのそれぞれについて、Rust 1.82を使用した`cargo test --locked`と`cargo build --release --locked`を実行します。
+GitHub Actionsは、`main`へのプッシュとPull Requestで、Windows、macOS、Linuxのそれぞれについて、現在の安定版Rustを使用した`cargo +stable test --locked`と`cargo +stable build --release --locked`を実行します。
 
 タグをプッシュすると、3環境のビルドがすべて成功した後にGitHub Releaseを作成します。タグは`Cargo.toml`のバージョンと一致する必要があり、`2.3.0`と`v2.3.0`の両方の形式を使用できます。ReleaseにはWindows、macOS、Linux用のアーカイブと`SHA256SUMS`を添付します。
 
