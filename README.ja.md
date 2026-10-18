@@ -297,6 +297,15 @@ compdef _j_generated_complete j
 # compdef _j_generated_complete cd
 ```
 
+`cd`でj-cmdのジャンプ機能を使いながら、Tabではzsh標準のディレクトリパス補完を使う場合は、`.zshrc`の末尾に次の設定を追加します。`compinit`（Oh My Zshを使用している場合はその読み込み）より後に配置してください。
+
+```zsh
+eval "$(command j init zsh --cmd cd)"
+compdef _cd cd
+```
+
+`compdef _cd cd`は、必ず`j init`の読み込みより後に記述してください。`cd`のパス補完が動かない場合にも、この設定を利用できます。`j`のTab補完はj-cmd独自の補完のままです。設定後は`source ~/.zshrc`を実行するか、新しいターミナルを開いてください。
+
 現在の登録状態は次のコマンドで確認できます。
 
 ```zsh
@@ -305,7 +314,7 @@ print -r -- "${_comps[cd]}"
 bindkey '^I'
 ```
 
-`--cmd cd`を使用している場合、`_comps[cd]`が`_j_generated_complete`でなければ、読み込み順を修正するか`compdef`を再実行してください。Tabが`undefined-key`の場合だけ、`bindkey '^I' expand-or-complete`で標準補完を復元できます。fzf-tabなどが意図的に別のウィジェットを使用している場合は、Tab割り当てを変更せず、`compdef`だけを再登録してください。
+`--cmd cd`を使用している場合、`_comps[cd]`はj-cmd独自の補完なら`_j_generated_complete`、上記の標準パス補完なら`_cd`になります。意図した値でなければ、読み込み順を修正するか`compdef`を再実行してください。Tabが`undefined-key`の場合だけ、`bindkey '^I' expand-or-complete`で標準補完を復元できます。fzf-tabなどが意図的に別のウィジェットを使用している場合は、Tab割り当てを変更せず、`compdef`だけを再登録してください。
 
 設定を直しても古い補完定義が残る場合は、`.zcompdump`を削除してからシェルを再起動し、再度`compinit`と`j init zsh`の生成設定を読み込んでください。
 

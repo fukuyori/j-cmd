@@ -297,6 +297,15 @@ compdef _j_generated_complete j
 # compdef _j_generated_complete cd
 ```
 
+To use j-cmd's jump behavior through `cd` while keeping zsh's standard directory path completion on Tab, add the following at the end of `.zshrc`, after `compinit` (or after loading Oh My Zsh):
+
+```zsh
+eval "$(command j init zsh --cmd cd)"
+compdef _cd cd
+```
+
+Keep `compdef _cd cd` after the `j init` integration. This setup can also restore path completion when Tab completion for `cd` does not work. Tab completion for `j` still uses j-cmd's custom completer. Run `source ~/.zshrc` or open a new terminal to apply the change.
+
 Check the current definitions with:
 
 ```zsh
@@ -305,7 +314,7 @@ print -r -- "${_comps[cd]}"
 bindkey '^I'
 ```
 
-When using `--cmd cd`, if `_comps[cd]` is not `_j_generated_complete`, fix the load order or run `compdef` again. Only when Tab is reported as `undefined-key`, restore standard completion with `bindkey '^I' expand-or-complete`. When using fzf-tab or another intentional Tab widget, leave the key binding unchanged and only re-register `compdef`.
+When using `--cmd cd`, `_comps[cd]` should be `_j_generated_complete` for j-cmd's custom completion, or `_cd` for the standard path completion shown above. If it differs from your intended setting, fix the load order or run `compdef` again. Only when Tab is reported as `undefined-key`, restore standard completion with `bindkey '^I' expand-or-complete`. When using fzf-tab or another intentional Tab widget, leave the key binding unchanged and only re-register `compdef`.
 
 If stale completion definitions remain, remove `.zcompdump`, restart the shell, and load `compinit` and the generated `j init zsh` integration again.
 
